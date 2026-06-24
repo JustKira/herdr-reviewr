@@ -50,6 +50,7 @@ Every action has a keyboard binding. The mouse-relevant ones also work by click 
 | switch scope | `u` uncommitted / `b` branch | click the scope in the header |
 | expand the fold under the cursor | `enter` | click the `⋯` fold row |
 | toggle line wrap | `w` | — |
+| resize the panes — widen / narrow the file list | `]` / `[` | drag the divider between the panes |
 | select a line range, removed lines included | `v` then move | click-drag in the diff |
 | comment on the selection | `c`, type, `enter` | after a drag-select |
 | insert a newline in a comment | `Alt+Enter` / `Shift+Enter` / `Ctrl+J` | — |

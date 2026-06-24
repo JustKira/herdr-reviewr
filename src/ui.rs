@@ -23,7 +23,7 @@ use crate::model::ChangeKind;
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let rows = vrows(area);
-    let (diff_area, files_area) = body_split(&rows);
+    let (diff_area, files_area) = body_split(&rows, app.list_pct);
 
     render_tab_bar(frame, app, rows[0]);
     render_diff_view(frame, app, diff_area);
@@ -51,18 +51,37 @@ fn footer_height(width: u16) -> u16 {
     FOOTER_COLS.div_ceil(width.max(1)).clamp(1, 3)
 }
 
-/// The body split into `(diff, files)` outer rects.
-fn body_split(rows: &[Rect]) -> (Rect, Rect) {
-    let body =
-        Layout::horizontal([Constraint::Percentage(68), Constraint::Percentage(32)]).split(rows[1]);
+/// The body split into `(diff, files)` outer rects, the file list taking `list_pct` percent.
+fn body_split(rows: &[Rect], list_pct: u16) -> (Rect, Rect) {
+    let body = Layout::horizontal([
+        Constraint::Percentage(100 - list_pct),
+        Constraint::Percentage(list_pct),
+    ])
+    .split(rows[1]);
     (body[0], body[1])
+}
+
+/// The whole body band (between the tab bar and status bar), for divider hit-testing.
+#[must_use]
+pub fn body_rect(area: Rect) -> Rect {
+    vrows(area)[1]
+}
+
+/// Whether `(col, row)` lands on the draggable divider between the two panes.
+#[must_use]
+pub fn hit_divider(area: Rect, list_pct: u16, col: u16, row: u16) -> bool {
+    let rows = vrows(area);
+    let (_, files_area) = body_split(&rows, list_pct);
+    let in_body = row >= rows[1].y && row < rows[1].y + rows[1].height;
+    // A 3-column grab zone straddling the abutting pane borders.
+    in_body && col + 1 >= files_area.x && col <= files_area.x + 1
 }
 
 /// The file index a click at `(col, row)` lands on, or `None` if outside the list.
 #[must_use]
-pub fn hit_file(area: Rect, col: u16, row: u16, n_files: usize) -> Option<usize> {
+pub fn hit_file(area: Rect, list_pct: u16, col: u16, row: u16, n_files: usize) -> Option<usize> {
     let rows = vrows(area);
-    let (_, files_area) = body_split(&rows);
+    let (_, files_area) = body_split(&rows, list_pct);
     let inner = inner_rect(files_area);
     if !contains(inner, col, row) {
         return None;
@@ -77,13 +96,14 @@ pub fn hit_file(area: Rect, col: u16, row: u16, n_files: usize) -> Option<usize>
 #[must_use]
 pub fn hit_diff(
     area: Rect,
+    list_pct: u16,
     col: u16,
     row: u16,
     heights: &[usize],
     diff_scroll: usize,
 ) -> Option<usize> {
     let rows = vrows(area);
-    let (diff_area, _) = body_split(&rows);
+    let (diff_area, _) = body_split(&rows, list_pct);
     let inner = inner_rect(diff_area);
     if !contains(inner, col, row) {
         return None;
@@ -101,9 +121,9 @@ pub fn hit_diff(
 
 /// The number of diff rows visible in the diff pane, used to clamp the scroll.
 #[must_use]
-pub fn diff_viewport_height(area: Rect) -> usize {
+pub fn diff_viewport_height(area: Rect, list_pct: u16) -> usize {
     let rows = vrows(area);
-    let (diff_area, _) = body_split(&rows);
+    let (diff_area, _) = body_split(&rows, list_pct);
     inner_rect(diff_area).height as usize
 }
 
@@ -111,7 +131,7 @@ pub fn diff_viewport_height(area: Rect) -> usize {
 #[must_use]
 pub fn diff_row_heights(app: &App, area: Rect) -> Vec<usize> {
     let rows = vrows(area);
-    let (diff_area, _) = body_split(&rows);
+    let (diff_area, _) = body_split(&rows, app.list_pct);
     let width = inner_rect(diff_area).width as usize;
     let total_lines: usize =
         app.diff.rows.iter().map(|r| if r.is_content() { 1 } else { r.hidden() }).sum();
@@ -135,9 +155,9 @@ fn composer_content_width(width: usize) -> usize {
 /// The diff pane's inner content width for the full terminal `area`, so the event loop can
 /// reserve the comment box without a `Frame` (mirrors [`diff_viewport_height`]).
 #[must_use]
-pub fn diff_inner_width(area: Rect) -> usize {
+pub fn diff_inner_width(area: Rect, list_pct: u16) -> usize {
     let rows = vrows(area);
-    let (diff_area, _) = body_split(&rows);
+    let (diff_area, _) = body_split(&rows, list_pct);
     inner_rect(diff_area).width as usize
 }
 

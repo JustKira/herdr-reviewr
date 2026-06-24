@@ -70,9 +70,10 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, poll: Duration) -> 
         // reserve the inline box's rows so the anchored line stays visible above it.
         let size = terminal.size()?;
         let area = Rect::new(0, 0, size.width, size.height);
-        let viewport = ui::diff_viewport_height(area);
+        let viewport = ui::diff_viewport_height(area, app.list_pct);
         let effective = if app.composing() {
-            viewport.saturating_sub(ui::composer_height(app, ui::diff_inner_width(area))).max(1)
+            let box_h = ui::composer_height(app, ui::diff_inner_width(area, app.list_pct));
+            viewport.saturating_sub(box_h).max(1)
         } else {
             viewport
         };
@@ -196,6 +197,9 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         (PageDown, _) => app.scroll_diff(PAGE),
         (PageUp, _) => app.scroll_diff(-PAGE),
         (Char('w'), _) => app.toggle_wrap(),
+        // `]` widens the file list, `[` narrows it (widening the diff).
+        (Char(']'), _) => app.resize_list(4),
+        (Char('['), _) => app.resize_list(-4),
         (Right, _) => app.scroll_h(8),
         (Left, _) => app.scroll_h(-8),
         (Char('u'), false) => app.set_scope(Scope::Uncommitted)?,
@@ -220,15 +224,21 @@ fn handle_mouse(app: &mut App, m: MouseEvent, area: Rect) -> Result<()> {
     }
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            if let Some(hit) = ui::hit_header(area, app, m.column, m.row) {
+            // The divider is checked first: a grab there starts a resize, not a selection.
+            if ui::hit_divider(area, app.list_pct, m.column, m.row) {
+                app.resizing = true;
+            } else if let Some(hit) = ui::hit_header(area, app, m.column, m.row) {
                 match hit {
                     ui::HeaderHit::Scope => app.set_scope(app.scope.toggled())?,
                     ui::HeaderHit::Send => app.export(&Agent),
                 }
-            } else if let Some(i) = ui::hit_file(area, m.column, m.row, app.file_rows.len()) {
+            } else if let Some(i) =
+                ui::hit_file(area, app.list_pct, m.column, m.row, app.file_rows.len())
+            {
                 app.select_file(i)?;
             } else if let Some(i) = ui::hit_diff(
                 area,
+                app.list_pct,
                 m.column,
                 m.row,
                 &ui::diff_row_heights(app, area),
@@ -242,8 +252,12 @@ fn handle_mouse(app: &mut App, m: MouseEvent, area: Rect) -> Result<()> {
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
-            if let Some(i) = ui::hit_diff(
+            if app.resizing {
+                let body = ui::body_rect(area);
+                app.drag_divider(body.width, m.column.saturating_sub(body.x));
+            } else if let Some(i) = ui::hit_diff(
                 area,
+                app.list_pct,
                 m.column,
                 m.row,
                 &ui::diff_row_heights(app, area),
@@ -252,6 +266,7 @@ fn handle_mouse(app: &mut App, m: MouseEvent, area: Rect) -> Result<()> {
                 app.drag_select_to(i);
             }
         }
+        MouseEventKind::Up(MouseButton::Left) => app.resizing = false,
         MouseEventKind::ScrollDown => app.scroll_diff(3),
         MouseEventKind::ScrollUp => app.scroll_diff(-3),
         // Trackpad horizontal swipes scroll the diff sideways, but only with wrap off —

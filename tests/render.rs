@@ -356,13 +356,13 @@ fn header_clicks_map_to_scope_and_send() {
 fn file_and_diff_clicks_map_to_row_indices() {
     let app = edited_app();
     // Right pane: the first file row maps to index 0; clicking past the list misses.
-    assert_eq!(ui::hit_file(AREA, 120, 2, app.files.len()), Some(0));
-    assert_eq!(ui::hit_file(AREA, 120, 9, app.files.len()), None);
+    assert_eq!(ui::hit_file(AREA, app.list_pct, 120, 2, app.file_rows.len()), Some(0));
+    assert_eq!(ui::hit_file(AREA, app.list_pct, 120, 9, app.file_rows.len()), None);
     // Left pane: diff rows map top-down to diff-line indices.
     assert!(app.visible.len() > 1);
     let heights = ui::diff_row_heights(&app, AREA);
-    assert_eq!(ui::hit_diff(AREA, 10, 2, &heights, 0), Some(0));
-    assert_eq!(ui::hit_diff(AREA, 10, 3, &heights, 0), Some(1));
+    assert_eq!(ui::hit_diff(AREA, app.list_pct, 10, 2, &heights, 0), Some(0));
+    assert_eq!(ui::hit_diff(AREA, app.list_pct, 10, 3, &heights, 0), Some(1));
 }
 
 #[test]

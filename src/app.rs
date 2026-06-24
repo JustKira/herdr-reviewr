@@ -18,6 +18,12 @@ use crate::highlight::Highlighter;
 use crate::logln;
 use crate::model::{ChangedFile, Comment, CommentStore, Scope, Side};
 
+/// The file-list pane's default width and resize bounds, as a percent of the body. The
+/// bounds keep both panes usable however the reviewer drags the divider.
+const DEFAULT_LIST_PCT: u16 = 32;
+const MIN_LIST_PCT: u16 = 15;
+const MAX_LIST_PCT: u16 = 60;
+
 /// Which pane has the keyboard.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Focus {
@@ -69,6 +75,11 @@ pub struct App {
     pub h_scroll: usize,
     /// Whether long diff lines wrap (default) or are scrolled horizontally.
     pub wrap: bool,
+    /// The file-list pane's width as a percent of the body; the diff takes the rest. The
+    /// reviewer resizes it by dragging the divider or with `[` / `]`.
+    pub list_pct: u16,
+    /// Whether a mouse drag is currently moving the pane divider.
+    pub resizing: bool,
     pub select_anchor: Option<usize>,
     pub store: CommentStore,
     pub list_cursor: usize,
@@ -99,6 +110,8 @@ impl App {
             diff_scroll: 0,
             h_scroll: 0,
             wrap: true,
+            list_pct: DEFAULT_LIST_PCT,
+            resizing: false,
             select_anchor: None,
             store: CommentStore::new(),
             list_cursor: 0,
@@ -290,6 +303,24 @@ impl App {
     pub fn toggle_wrap(&mut self) {
         self.wrap = !self.wrap;
         self.h_scroll = 0;
+    }
+
+    /// Widen (`+`) or narrow (`-`) the file-list pane by `delta` percent, clamped so neither
+    /// pane collapses. Bound to `]` / `[`.
+    pub fn resize_list(&mut self, delta: i16) {
+        let next = (self.list_pct as i16 + delta).clamp(MIN_LIST_PCT as i16, MAX_LIST_PCT as i16);
+        self.list_pct = next as u16;
+    }
+
+    /// Set the file-list width so the divider sits at body column `x` (a mouse drag). `x` is
+    /// measured from the body's left edge; the list spans from there to the right edge.
+    pub fn drag_divider(&mut self, body_width: u16, x: u16) {
+        if body_width == 0 {
+            return;
+        }
+        let list_cols = body_width.saturating_sub(x.min(body_width));
+        let pct = (u32::from(list_cols) * 100 / u32::from(body_width)) as u16;
+        self.list_pct = pct.clamp(MIN_LIST_PCT, MAX_LIST_PCT);
     }
 
     /// Keep `diff_scroll` so the cursor's logical row fits in a `viewport`-display-row

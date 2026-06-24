@@ -341,6 +341,28 @@ fn a_comment_can_be_written_across_multiple_lines() {
 }
 
 #[test]
+fn the_pane_divider_resizes_and_clamps() {
+    let r = edited_repo();
+    let mut app = app_on(&r);
+    let start = app.list_pct;
+    app.resize_list(4);
+    assert_eq!(app.list_pct, start + 4, "[ / ] step the divider");
+    // Clamps: never collapses either pane however far it is pushed.
+    for _ in 0..50 {
+        app.resize_list(4);
+    }
+    assert!(app.list_pct <= 60, "the file list never swallows the diff");
+    for _ in 0..50 {
+        app.resize_list(-4);
+    }
+    assert!(app.list_pct >= 15, "the diff never swallows the file list");
+
+    // A drag sets the width from the divider's body column.
+    app.drag_divider(100, 70); // list spans columns 70..100 → 30%
+    assert_eq!(app.list_pct, 30);
+}
+
+#[test]
 fn ctrl_w_deletes_the_previous_word_in_a_comment() {
     let r = edited_repo();
     let mut app = app_on(&r);
