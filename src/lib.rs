@@ -12,6 +12,7 @@ pub mod app;
 pub mod config;
 pub mod diff;
 pub mod export;
+pub mod file_list;
 pub mod git;
 pub mod herdr;
 pub mod highlight;
@@ -186,10 +187,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         (Char('q'), _) => app.should_quit = true,
         (Char('r'), _) => app.reload()?,
         (Tab, _) => app.toggle_focus(),
-        // In the diff, `enter` expands a fold under the cursor; from the file list it
-        // drops focus into the diff.
+        // In the diff, `enter` expands a fold under the cursor; in the file list it opens
+        // a file (dropping focus into the diff) or toggles a directory.
         (Enter, _) if app.focus == Focus::Diff => app.expand_fold(),
-        (Enter, _) => app.focus = Focus::Diff,
+        (Enter, _) => app.activate_file_row(),
         (Char('j') | Down, _) => app.move_cursor(1)?,
         (Char('k') | Up, _) => app.move_cursor(-1)?,
         (PageDown, _) => app.scroll_diff(PAGE),
@@ -224,7 +225,7 @@ fn handle_mouse(app: &mut App, m: MouseEvent, area: Rect) -> Result<()> {
                     ui::HeaderHit::Scope => app.set_scope(app.scope.toggled())?,
                     ui::HeaderHit::Send => app.export(&Agent),
                 }
-            } else if let Some(i) = ui::hit_file(area, m.column, m.row, app.files.len()) {
+            } else if let Some(i) = ui::hit_file(area, m.column, m.row, app.file_rows.len()) {
                 app.select_file(i)?;
             } else if let Some(i) = ui::hit_diff(
                 area,

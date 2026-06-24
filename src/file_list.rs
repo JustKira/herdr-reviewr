@@ -1,0 +1,222 @@
+//! The file-list directory tree: the scope's changed files grouped into a collapsible
+//! tree of directories and files, flattened to the rows the navigator paints.
+//!
+//! See `specs/file-list.md`. This module is pure — it turns a `&[ChangedFile]` plus the set
+//! of collapsed directory paths into a flat `Vec<Row>`; selection, expansion state, and
+//! rendering live in `app.rs` and `ui.rs`.
+
+use std::collections::{BTreeMap, HashSet};
+use std::hash::BuildHasher;
+
+use crate::model::{ChangeKind, ChangedFile};
+
+/// A visible row of the flattened tree: a directory or a file.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Row {
+    /// Nesting level, for indentation.
+    pub depth: usize,
+    /// The segment(s) shown — a directory name, a file basename, or a collapsed chain
+    /// joined with `/` (single-child directories fold into their child).
+    pub name: String,
+    pub kind: RowKind,
+}
+
+/// What a [`Row`] is: a directory (togglable) or a file (opens a diff).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum RowKind {
+    /// A directory: its full path keys its expansion state.
+    Dir { path: String, expanded: bool },
+    /// A file: its index into the source `&[ChangedFile]`, plus the stats shown.
+    File { index: usize, change: ChangeKind, additions: u32, deletions: u32 },
+}
+
+impl Row {
+    /// The source-file index when this row is a file; `None` for a directory.
+    pub fn file_index(&self) -> Option<usize> {
+        match self.kind {
+            RowKind::File { index, .. } => Some(index),
+            RowKind::Dir { .. } => None,
+        }
+    }
+
+    /// The directory path when this row is a directory; `None` for a file.
+    pub fn dir_path(&self) -> Option<&str> {
+        match &self.kind {
+            RowKind::Dir { path, .. } => Some(path),
+            RowKind::File { .. } => None,
+        }
+    }
+}
+
+/// One directory node: its sub-directories and the files directly in it, both keyed by name
+/// so iteration is alphabetical.
+#[derive(Default)]
+struct Dir {
+    dirs: BTreeMap<String, Dir>,
+    files: BTreeMap<String, usize>,
+}
+
+/// Flatten `files` into the visible tree rows, honoring which directories are `collapsed`
+/// (every other directory is expanded). Single-child directories fold into their child;
+/// directories sort before files, alphabetically within a parent.
+pub fn build<S: BuildHasher>(files: &[ChangedFile], collapsed: &HashSet<String, S>) -> Vec<Row> {
+    let mut root = Dir::default();
+    for (i, f) in files.iter().enumerate() {
+        insert(&mut root, &f.path, i);
+    }
+    let mut rows = Vec::new();
+    flatten(&mut rows, &root, "", 0, collapsed, files);
+    rows
+}
+
+/// Insert `path`'s file at `index` into the tree, creating directories along the way.
+fn insert(root: &mut Dir, path: &str, index: usize) {
+    let mut segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let Some(base) = segments.pop() else { return };
+    let mut cur = root;
+    for seg in segments {
+        cur = cur.dirs.entry(seg.to_string()).or_default();
+    }
+    cur.files.insert(base.to_string(), index);
+}
+
+/// Emit `dir`'s children as rows: directories first (alphabetical), then files.
+fn flatten<S: BuildHasher>(
+    rows: &mut Vec<Row>,
+    dir: &Dir,
+    prefix: &str,
+    depth: usize,
+    collapsed: &HashSet<String, S>,
+    files: &[ChangedFile],
+) {
+    for (name, sub) in &dir.dirs {
+        let (display, path, node) = compress(name, join(prefix, name), sub);
+        if let Some((fname, &index)) = lone_file(node) {
+            // A single-child chain ending in one file folds into a file row, e.g. `a/b/x.rs`.
+            rows.push(file_row(depth, format!("{display}/{fname}"), index, files));
+        } else {
+            let expanded = !collapsed.contains(&path);
+            rows.push(Row {
+                depth,
+                name: display,
+                kind: RowKind::Dir { path: path.clone(), expanded },
+            });
+            if expanded {
+                flatten(rows, node, &path, depth + 1, collapsed, files);
+            }
+        }
+    }
+    for (fname, &index) in &dir.files {
+        rows.push(file_row(depth, fname.clone(), index, files));
+    }
+}
+
+/// Follow single-child directory links from `start`, joining names with `/`, returning the
+/// display name, full path, and the node where the chain stops (a real directory or a node
+/// holding a single file).
+fn compress<'a>(name: &str, path: String, start: &'a Dir) -> (String, String, &'a Dir) {
+    let mut display = name.to_string();
+    let mut path = path;
+    let mut node = start;
+    while node.files.is_empty() && node.dirs.len() == 1 {
+        let (child_name, child) = node.dirs.iter().next().expect("len == 1");
+        display = format!("{display}/{child_name}");
+        path = format!("{path}/{child_name}");
+        node = child;
+    }
+    (display, path, node)
+}
+
+/// `Some((name, index))` when `node` holds exactly one file and no sub-directories.
+fn lone_file(node: &Dir) -> Option<(&String, &usize)> {
+    (node.dirs.is_empty() && node.files.len() == 1).then(|| node.files.iter().next().unwrap())
+}
+
+fn file_row(depth: usize, name: String, index: usize, files: &[ChangedFile]) -> Row {
+    let f = &files[index];
+    Row {
+        depth,
+        name,
+        kind: RowKind::File {
+            index,
+            change: f.kind,
+            additions: f.additions,
+            deletions: f.deletions,
+        },
+    }
+}
+
+fn join(prefix: &str, name: &str) -> String {
+    if prefix.is_empty() { name.to_string() } else { format!("{prefix}/{name}") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RowKind, build};
+    use crate::model::{ChangeKind, ChangedFile};
+    use std::collections::HashSet;
+
+    fn file(path: &str) -> ChangedFile {
+        ChangedFile {
+            path: path.into(),
+            kind: ChangeKind::Modified,
+            additions: 1,
+            deletions: 0,
+            previous_path: None,
+        }
+    }
+
+    /// Render the rows as `<depth>:<dir|file>:<name>` lines, for compact assertions.
+    fn shape(files: &[ChangedFile], collapsed: &HashSet<String>) -> Vec<String> {
+        build(files, collapsed)
+            .iter()
+            .map(|r| {
+                let kind = if r.file_index().is_some() { "file" } else { "dir" };
+                format!("{}:{}:{}", r.depth, kind, r.name)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn groups_files_into_directories_dirs_before_files() {
+        let files = [file("src/app.rs"), file("src/ui.rs"), file("Cargo.toml")];
+        let rows = shape(&files, &HashSet::new());
+        assert_eq!(
+            rows,
+            ["0:dir:src", "1:file:app.rs", "1:file:ui.rs", "0:file:Cargo.toml"],
+            "src/ groups before the top-level file"
+        );
+    }
+
+    #[test]
+    fn a_single_child_chain_folds_into_the_file() {
+        // A chain of one-child directories collapses into one file row.
+        let files = [file("docs/plans/2026/plan.md")];
+        assert_eq!(shape(&files, &HashSet::new()), ["0:file:docs/plans/2026/plan.md"]);
+    }
+
+    #[test]
+    fn a_single_child_directory_folds_but_a_branch_does_not() {
+        // `a/b/` collapses (one child each) until `c/` branches into two files.
+        let files = [file("a/b/c/one.rs"), file("a/b/c/two.rs")];
+        let rows = shape(&files, &HashSet::new());
+        assert_eq!(rows, ["0:dir:a/b/c", "1:file:one.rs", "1:file:two.rs"]);
+    }
+
+    #[test]
+    fn a_collapsed_directory_hides_its_children() {
+        let files = [file("src/app.rs"), file("src/ui.rs")];
+        let collapsed: HashSet<String> = ["src".to_string()].into_iter().collect();
+        assert_eq!(shape(&files, &collapsed), ["0:dir:src"], "children are hidden");
+    }
+
+    #[test]
+    fn a_file_row_carries_its_source_index_and_stats() {
+        let files = [file("z.rs"), file("a.rs")];
+        let rows = build(&files, &HashSet::new());
+        // Sorted alphabetically: a.rs first → source index 1, then z.rs → index 0.
+        assert_eq!(rows[0].file_index(), Some(1));
+        assert_eq!(rows[1].file_index(), Some(0));
+        assert!(matches!(rows[0].kind, RowKind::File { change: ChangeKind::Modified, .. }));
+    }
+}

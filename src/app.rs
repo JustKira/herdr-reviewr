@@ -12,6 +12,7 @@ use anyhow::Result;
 
 use crate::diff::{DiffCache, FileDiff, Row};
 use crate::export::{ExportTarget, format_all};
+use crate::file_list::{self, RowKind};
 use crate::git;
 use crate::highlight::Highlighter;
 use crate::logln;
@@ -44,7 +45,13 @@ pub struct App {
     pub scope: Scope,
     pub focus: Focus,
     pub files: Vec<ChangedFile>,
+    /// The flattened directory tree over `files` — the rows the navigator paints. The
+    /// `file_cursor` indexes this, not `files`.
+    pub file_rows: Vec<file_list::Row>,
     pub file_cursor: usize,
+    /// Directory paths the user has collapsed; every other directory is expanded. Keyed by
+    /// path, so it survives a poll that rebuilds the tree.
+    collapsed_dirs: HashSet<String>,
     pub diff: FileDiff,
     /// The rows actually shown: `diff.rows` with each fold collapsed to a marker or
     /// expanded to its lines. The cursor, scroll, selection, and hit-testing index this.
@@ -81,7 +88,9 @@ impl App {
             scope,
             focus: Focus::Files,
             files: Vec::new(),
+            file_rows: Vec::new(),
             file_cursor: 0,
+            collapsed_dirs: HashSet::new(),
             diff: FileDiff::empty(),
             visible: Vec::new(),
             expanded_folds: HashSet::new(),
@@ -115,8 +124,33 @@ impl App {
         matches!(self.mode, Mode::Composing { .. })
     }
 
+    /// The changed file under the cursor when the cursor is on a file row; `None` on a
+    /// directory row (or an empty list).
     pub fn current_file(&self) -> Option<&ChangedFile> {
-        self.files.get(self.file_cursor)
+        self.file_under_cursor_index().map(|i| &self.files[i])
+    }
+
+    /// The `files` index of the file row under the cursor, or `None` on a directory row.
+    fn file_under_cursor_index(&self) -> Option<usize> {
+        self.file_rows.get(self.file_cursor).and_then(file_list::Row::file_index)
+    }
+
+    /// The visible-row index of the file at `path`, for restoring selection across a poll.
+    fn file_row_of_path(&self, path: &str) -> Option<usize> {
+        self.file_rows
+            .iter()
+            .position(|r| r.file_index().is_some_and(|i| self.files[i].path == path))
+    }
+
+    /// The visible-row index of the first file row, the initial selection so a diff shows
+    /// at once even when the tree opens on a directory.
+    fn first_file_row(&self) -> Option<usize> {
+        self.file_rows.iter().position(|r| r.file_index().is_some())
+    }
+
+    /// Rebuild the flattened tree from `files` and the collapsed-directory set.
+    fn rebuild_file_rows(&mut self) {
+        self.file_rows = file_list::build(&self.files, &self.collapsed_dirs);
     }
 
     /// Reload the changed-files list and (unless composing) the open diff.
@@ -127,6 +161,7 @@ impl App {
         // Outside a git repo, show an empty state rather than failing (herdr-host.md).
         if !git::is_repo(&self.repo) {
             self.files.clear();
+            self.file_rows.clear();
             self.file_cursor = 0;
             if !self.composing() {
                 self.diff = FileDiff::empty();
@@ -135,16 +170,16 @@ impl App {
             }
             return Ok(());
         }
-        let prev = self.current_file().map(|f| f.path.clone());
+        // Preserve the open file by path; the collapsed-directory set survives untouched.
+        let prev = self.diff_path.clone();
         self.files = git::changed_files(&self.repo, self.scope, self.base.as_deref())?;
-        if let Some(path) = prev
-            && let Some(i) = self.files.iter().position(|f| f.path == path)
-        {
-            self.file_cursor = i;
-        }
-        if self.file_cursor >= self.files.len() {
-            self.file_cursor = self.files.len().saturating_sub(1);
-        }
+        self.rebuild_file_rows();
+        self.file_cursor = prev
+            .as_deref()
+            .and_then(|p| self.file_row_of_path(p))
+            .or_else(|| self.first_file_row())
+            .unwrap_or(0)
+            .min(self.file_rows.len().saturating_sub(1));
         // While composing, the open diff is frozen so the anchor under the comment
         // cannot shift beneath the writer.
         if !self.composing() {
@@ -303,17 +338,15 @@ impl App {
         };
     }
 
-    /// Move the cursor in the focused pane; in the files pane this reloads the diff.
+    /// Move the cursor in the focused pane. In the files pane the cursor steps over the
+    /// tree's visible rows; landing on a file row opens its diff, while a directory row
+    /// keeps the current diff so scanning the tree never blanks the pane.
     pub fn move_cursor(&mut self, delta: isize) -> Result<()> {
         match self.focus {
             Focus::Files => {
-                if !self.files.is_empty() {
-                    let prev = self.file_cursor;
-                    self.file_cursor = step(self.file_cursor, delta, self.files.len());
-                    if self.file_cursor != prev {
-                        self.reset_diff_view();
-                        self.load_diff();
-                    }
+                if !self.file_rows.is_empty() {
+                    self.file_cursor = step(self.file_cursor, delta, self.file_rows.len());
+                    self.open_cursor_file();
                 }
             }
             Focus::Diff => {
@@ -325,15 +358,54 @@ impl App {
         Ok(())
     }
 
-    /// Select the file at `index` (mouse click), reset the diff view, and load its diff.
-    pub fn select_file(&mut self, index: usize) -> Result<()> {
-        if index < self.files.len() {
-            self.focus = Focus::Files;
-            self.file_cursor = index;
+    /// Open the diff for the file under the cursor when it differs from the one shown; a
+    /// no-op on a directory row, so the current diff stays put.
+    fn open_cursor_file(&mut self) {
+        if let Some(i) = self.file_under_cursor_index()
+            && Some(self.files[i].path.as_str()) != self.diff_path.as_deref()
+        {
             self.reset_diff_view();
             self.load_diff();
         }
+    }
+
+    /// Act on the file-list row at `index` (a mouse click): a file opens its diff, a
+    /// directory toggles its expansion.
+    pub fn select_file(&mut self, index: usize) -> Result<()> {
+        if index >= self.file_rows.len() {
+            return Ok(());
+        }
+        self.focus = Focus::Files;
+        self.file_cursor = index;
+        match self.file_rows[index].kind {
+            RowKind::File { .. } => self.open_cursor_file(),
+            RowKind::Dir { .. } => self.toggle_dir(),
+        }
         Ok(())
+    }
+
+    /// Activate the file-list row under the cursor (`enter`): a directory toggles, a file
+    /// drops focus into its diff (already loaded by the cursor landing on it).
+    pub fn activate_file_row(&mut self) {
+        match self.file_rows.get(self.file_cursor).map(|r| &r.kind) {
+            Some(RowKind::Dir { .. }) => self.toggle_dir(),
+            Some(RowKind::File { .. }) => self.focus = Focus::Diff,
+            None => {}
+        }
+    }
+
+    /// Collapse or expand the directory under the cursor, then rebuild the tree. The cursor
+    /// stays on the directory row (still present, now toggled).
+    fn toggle_dir(&mut self) {
+        let Some(path) = self.file_rows.get(self.file_cursor).and_then(|r| r.dir_path()) else {
+            return;
+        };
+        let path = path.to_string();
+        if !self.collapsed_dirs.remove(&path) {
+            self.collapsed_dirs.insert(path);
+        }
+        self.rebuild_file_rows();
+        self.file_cursor = self.file_cursor.min(self.file_rows.len().saturating_sub(1));
     }
 
     /// Move the diff cursor by `delta` lines (page keys, mouse wheel) regardless of
@@ -392,7 +464,7 @@ impl App {
         // Bring the comment's file into the diff and land the cursor on its line, so the
         // inline edit box opens over the comment — even when editing from the list.
         if self.diff_path.as_deref() != Some(file.as_str())
-            && let Some(fi) = self.files.iter().position(|f| f.path == file)
+            && let Some(fi) = self.file_row_of_path(&file)
         {
             self.file_cursor = fi;
             self.reset_diff_view();

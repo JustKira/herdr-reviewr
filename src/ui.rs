@@ -13,10 +13,12 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, Focus, Mode};
 use crate::diff::{FileState, Row};
+use crate::file_list::RowKind;
+use crate::model::ChangeKind;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -240,30 +242,114 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if app.files.is_empty() {
+    if app.file_rows.is_empty() {
         frame.render_widget(dim_paragraph("no changes"), inner);
         return;
     }
 
     let width = inner.width as usize;
     let items: Vec<ListItem> = app
-        .files
+        .file_rows
         .iter()
         .enumerate()
-        .map(|(i, f)| {
-            let marker = Span::styled(
-                format!("{} ", f.kind.marker()),
-                Style::default().fg(kind_color(f.kind.marker())),
-            );
-            let name = Span::styled(f.path.clone(), text_style());
-            let stat = Span::styled(
-                format!("  +{} -{}", f.additions, f.deletions),
-                Style::default().fg(cat::OVERLAY0),
-            );
-            selectable_row(vec![marker, name, stat], width, i == app.file_cursor)
+        .map(|(i, row)| {
+            let selected = i == app.file_cursor;
+            let indent = "  ".repeat(row.depth);
+            match &row.kind {
+                RowKind::Dir { expanded, .. } => {
+                    let arrow = if *expanded { "▾ " } else { "▸ " };
+                    let spans = vec![
+                        Span::styled(
+                            format!("{indent}{arrow}"),
+                            Style::default().fg(cat::OVERLAY0),
+                        ),
+                        Span::styled(
+                            format!("{}/", row.name),
+                            Style::default().fg(cat::SUBTEXT0).add_modifier(Modifier::BOLD),
+                        ),
+                    ];
+                    selectable_row(spans, width, selected)
+                }
+                RowKind::File { change, additions, deletions, .. } => file_row_item(
+                    &indent, *change, &row.name, *additions, *deletions, width, selected,
+                ),
+            }
         })
         .collect();
     frame.render_widget(List::new(items), inner);
+}
+
+/// A file row: `<indent><marker> <name> <stats>` — the marker colored by kind, the basename
+/// bright with its parent directories dimmed, and the `+a −d` stats right-aligned against the
+/// pane edge. A name too wide for the row keeps its tail behind a leading `…/`.
+fn file_row_item(
+    indent: &str,
+    change: ChangeKind,
+    name: &str,
+    additions: u32,
+    deletions: u32,
+    width: usize,
+    selected: bool,
+) -> ListItem<'static> {
+    let marker = format!("{} ", change.marker());
+    let stats = stats_str(additions, deletions);
+    let gap = if stats.is_empty() { 0 } else { 2 };
+    let fixed = indent.width() + marker.width() + stats.width() + gap;
+    let shown = elide_head(name, width.saturating_sub(fixed).max(1));
+    // Dim the parent directories of a collapsed-chain name; keep the basename bright.
+    let (dim, base) = match shown.rfind('/') {
+        Some(p) => (&shown[..=p], &shown[p + 1..]),
+        None => ("", shown.as_str()),
+    };
+
+    let mut spans = vec![
+        Span::styled(indent.to_string(), text_style()),
+        Span::styled(marker, Style::default().fg(kind_color(change.marker()))),
+    ];
+    if !dim.is_empty() {
+        spans.push(Span::styled(dim.to_string(), Style::default().fg(cat::OVERLAY0)));
+    }
+    spans.push(Span::styled(base.to_string(), text_style()));
+    if !stats.is_empty() {
+        let used: usize = spans.iter().map(Span::width).sum();
+        let pad = width.saturating_sub(used + stats.width());
+        spans.push(Span::raw(" ".repeat(pad)));
+        spans.push(Span::styled(stats, Style::default().fg(cat::OVERLAY0)));
+    }
+    selectable_row(spans, width, selected)
+}
+
+/// The `+a −d` stats, dropping a side that is zero (`+210`, `−4`, or empty).
+fn stats_str(additions: u32, deletions: u32) -> String {
+    match (additions, deletions) {
+        (0, 0) => String::new(),
+        (a, 0) => format!("+{a}"),
+        (0, d) => format!("−{d}"),
+        (a, d) => format!("+{a} −{d}"),
+    }
+}
+
+/// Shorten `name` to `max` columns by eliding its head behind a leading `…`, preferring to
+/// cut at a path separator so a partial directory name never shows.
+fn elide_head(name: &str, max: usize) -> String {
+    if name.width() <= max {
+        return name.to_string();
+    }
+    let budget = max.saturating_sub(1); // a column for the `…`
+    let mut tail = String::new();
+    let mut w = 0;
+    for ch in name.chars().rev() {
+        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if w + cw > budget {
+            break;
+        }
+        tail.insert(0, ch);
+        w += cw;
+    }
+    if let Some(slash) = tail.find('/') {
+        tail = tail[slash..].to_string();
+    }
+    format!("…{tail}")
 }
 
 fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {

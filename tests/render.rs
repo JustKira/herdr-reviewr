@@ -55,6 +55,32 @@ fn edited_app() -> App {
 }
 
 #[test]
+fn the_file_list_renders_as_a_directory_tree() {
+    let r = Repo::init();
+    r.write("src/app.rs", "x\n");
+    r.write("src/ui.rs", "y\n");
+    r.write("Cargo.toml", "[package]\n");
+    r.commit_all("init");
+    r.write("src/app.rs", "x2\n");
+    r.write("src/ui.rs", "y2\n");
+    r.write("Cargo.toml", "[package]\nname='z'\n");
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+
+    // Scan only the file-list pane (the right third) so the diff header — which does show
+    // the open file's full path — doesn't confuse the assertions.
+    let files_pane: String = render(&app)
+        .lines()
+        .map(|l| l.chars().skip(l.chars().count() * 70 / 100).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(files_pane.contains("src/"), "the directory groups its files: {files_pane:?}");
+    assert!(files_pane.contains("app.rs") && files_pane.contains("ui.rs"), "files by basename");
+    assert!(!files_pane.contains("src/app.rs"), "a grouped file is not shown by full path");
+    assert!(files_pane.contains("Cargo.toml"), "the top-level file shows too");
+}
+
+#[test]
 fn a_renamed_file_shows_old_arrow_new_in_the_header() {
     let r = Repo::init();
     r.write("old_name.rs", "stable contents that survive the move\nplus a second line\n");
