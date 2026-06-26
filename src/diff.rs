@@ -147,7 +147,9 @@ pub struct FileDiff {
 /// A file beyond either budget renders as `too_large` rather than stalling the diff —
 /// the byte budget also catches a single huge line that the line budget misses.
 const MAX_LINES: usize = 50_000;
-const MAX_BYTES: usize = 2_000_000;
+/// The byte budget. A file larger than this renders as a `too_large` notice; `set_file_view`
+/// checks the on-disk size against it and skips the read entirely (`app.rs`).
+pub const MAX_BYTES: usize = 2_000_000;
 
 impl Default for FileDiff {
     fn default() -> Self {
@@ -268,6 +270,18 @@ impl FileDiff {
             })
             .collect();
         Self { path, previous_path: None, state: FileState::Normal, view: View::File, rows }
+    }
+
+    /// The File-view `too_large` notice, for an over-budget file the caller declines to read.
+    /// `set_file_view` checks the on-disk size and builds this rather than reading the bytes.
+    pub fn file_too_large(path: String) -> Self {
+        Self {
+            path,
+            previous_path: None,
+            state: FileState::TooLarge,
+            view: View::File,
+            rows: Vec::new(),
+        }
     }
 }
 

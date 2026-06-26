@@ -532,3 +532,38 @@ fn last_turn_without_a_baseline_renders_the_waiting_state() {
     assert!(out.contains("[last turn]"), "the scope chip reads last turn");
     assert!(out.contains("waiting for the agent's next turn"), "the cold-start empty state shows");
 }
+
+#[test]
+fn all_files_tab_bar_footer_and_count_read_for_the_tab() {
+    use herdr_review::app::Tab;
+    let r = Repo::init();
+    r.write("a.rs", "one\n");
+    r.commit_all("init");
+    r.write("a.rs", "ONE\n"); // one change
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+    app.set_tab(Tab::AllFiles).unwrap();
+
+    let out = render(&app);
+    assert!(out.contains("1 Changes"), "tab labels carry their switch digit:\n{out}");
+    assert!(out.contains("2 All files"));
+    assert!(out.contains("1 changed"), "the count is named 'changed' in All files:\n{out}");
+    assert!(out.contains("1/2 tab"), "the footer hints the tab keys:\n{out}");
+    assert!(!out.contains("tab focus"), "the colliding 'tab focus' hint is renamed:\n{out}");
+}
+
+#[test]
+fn all_files_empty_pane_reads_select_a_file() {
+    use herdr_review::app::Tab;
+    let r = Repo::init();
+    r.write("src/a.rs", "x\n");
+    r.write("src/b.rs", "y\n"); // two children so src/ is a real collapsed dir, not a folded file
+    r.commit_all("init");
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+    app.set_tab(Tab::AllFiles).unwrap(); // clean repo: no seed; cursor rests on collapsed src/
+
+    let out = render(&app);
+    assert!(out.contains("select a file to read"), "the empty All files left pane copy:\n{out}");
+    assert!(!out.contains("no diff"), "no diff vocabulary in the content browser:\n{out}");
+}

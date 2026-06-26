@@ -1633,3 +1633,83 @@ fn a_file_view_comment_exports_as_path_line_with_a_context_snippet() {
     assert!(!out.contains("(removed)"), "a content comment never carries (removed):\n{out}");
     assert!(out.contains(" beta"), "the snippet is the space-prefixed content line:\n{out}");
 }
+
+#[test]
+fn an_oversize_file_in_all_files_degrades_to_a_notice() {
+    use herdr_review::app::Tab;
+    use herdr_review::diff::{FileState, View};
+    let r = Repo::init();
+    r.write("small.rs", "fn main() {}\n");
+    r.write("big.bin", &"x\n".repeat(1_100_000)); // ~2.2 MB, over the 2 MB budget
+    r.commit_all("init");
+    let mut app = app_on(&r);
+    app.set_tab(Tab::AllFiles).unwrap();
+    let row = file_row_of(&app, "big.bin").expect("big.bin listed");
+    app.select_file(row).unwrap();
+    assert_eq!(app.diff.state, FileState::TooLarge, "an over-budget file is not read whole");
+    assert_eq!(app.diff.view, View::File);
+    assert!(app.visible.is_empty());
+}
+
+#[test]
+fn switching_to_an_empty_file_view_focuses_the_tree() {
+    use herdr_review::app::Tab;
+    let r = Repo::init();
+    r.write("a.rs", "alpha\n");
+    r.commit_all("init");
+    r.remove("a.rs"); // deleted: still tracked (in ls-files) but empty on disk
+    let mut app = app_on(&r);
+    app.focus = Focus::Diff; // reader is in the diff pane on the deletion
+    app.set_tab(Tab::AllFiles).unwrap();
+    assert!(app.visible.is_empty(), "the deleted file's content view is empty");
+    assert_eq!(app.focus, Focus::Files, "an empty left pane focuses the tree, not traps the keys");
+}
+
+#[test]
+fn a_deletion_row_carry_lands_on_the_nearest_new_side_line() {
+    use herdr_review::app::Tab;
+    let r = Repo::init();
+    r.write("f.rs", "keep-a\nkeep-b\nkeep-c\ndel-1\ndel-2\ndel-3\nafter-1\nafter-2\nafter-3\n");
+    r.commit_all("init");
+    r.write("f.rs", "keep-a\nkeep-b\nkeep-c\nafter-1\nafter-2\nafter-3\n"); // removed del-1..3
+    let mut app = app_on(&r);
+    app.focus = Focus::Diff;
+    let del = app.visible.iter().position(|row| row.text() == "del-2").expect("del-2 deletion row");
+    app.diff_cursor = del;
+    app.set_tab(Tab::AllFiles).unwrap();
+    // The carry takes the new-side line nearest the deletion (after-1, which survives), not the
+    // old line number — so the File view lands on after-1, not unrelated code at that old number.
+    assert_eq!(app.diff_path.as_deref(), Some("f.rs"));
+    assert_eq!(app.visible[app.diff_cursor].text(), "after-1", "lands on the surviving line");
+}
+
+#[test]
+fn a_seed_centers_the_carried_line() {
+    use std::fmt::Write as _;
+
+    use herdr_review::app::Tab;
+    let r = Repo::init();
+    let mut body = String::new();
+    for i in 0..60 {
+        writeln!(body, "line {i}").unwrap();
+    }
+    r.write("app.rs", &body);
+    r.commit_all("init");
+    r.write("app.rs", &body.replace("line 40", "LINE 40")); // change deep in the file
+    let mut app = app_on(&r);
+    app.focus = Focus::Diff;
+    let deep = app.visible.iter().position(|row| row.new_no() == Some(41)).expect("line 41 row");
+    app.diff_cursor = deep;
+    app.set_tab(Tab::AllFiles).unwrap();
+    assert!(app.center_diff, "a seed requests centering");
+
+    let viewport = 20;
+    app.center_diff_cursor(viewport);
+    let cursor = app.diff_cursor;
+    assert!(app.diff_scroll > 0, "a deep seeded line is not pinned to the top");
+    assert!(
+        cursor >= app.diff_scroll && cursor < app.diff_scroll + viewport,
+        "the line is in view"
+    );
+    assert_eq!(app.diff_scroll, cursor.saturating_sub(viewport / 2), "the line sits mid-viewport");
+}

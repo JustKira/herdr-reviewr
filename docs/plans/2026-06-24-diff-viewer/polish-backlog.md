@@ -28,3 +28,14 @@ Tuning and polish within the current stack (ratatui + syntect/two-face + Catppuc
 ## Approach
 
 Color values are see-it-live decisions — wire a batch, push to the pane, tune by eye ("warmer / dimmer / more contrast") rather than guessing hex in the abstract.
+
+## All files — deferred from the UX-review pass (2026-06-26)
+
+The UX review of the All files tab fixed the high-value items (A–H); these were consciously deferred.
+
+- **Git-blob/diff-side read cap.** `set_file_view` now checks on-disk size before reading (`app.rs`), but the diff path (`git::file_content` → full `git show` stdout; `worktree_content` on the new side) still reads before `build`'s budget trips. Mirror the metadata guard with `git cat-file -s` on the blob side. Pre-existing, less acute than the one-keystroke File-view path.
+- **File-view per-frame height/wrap recompute.** `diff_row_heights` re-wraps every visible row each frame; the File view disables folding, so `visible` is the whole file (up to the 50k-line cap), making `j`-scroll on a big file laggy. Memoize heights by `(content-hash, width, wrap)`, or measure only the scroll window. Same class as the M5-deferred "single measure+paint pass".
+- **`set_scope` reveals the cursor.** A scope switch sets `reveal_files = true`, which can yank a wheel-scrolled All files viewport back to the cursor, against file-list.md's "scroll holds". Minor; only after a wheel scroll.
+- **Header count vs. visible markers.** The count is the changeset (e.g. `3 changed`) while a deletion in that set has no row in the worktree tree, so the number can exceed the marked rows. Spec-sanctioned; no change.
+- **Symlinks render target content.** `worktree_content`'s `fs::read` follows links. Acceptable; a broken symlink reads empty → "empty file".
+- **Dropped: prune `reveal_path`'s folded-prefix toggles.** Considered, not done — those toggles encode "the seed revealed this path", so on a later unfold keeping the path expanded keeps the seeded file visible (correct), not a surprise.

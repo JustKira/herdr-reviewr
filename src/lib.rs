@@ -113,7 +113,11 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, poll: Duration) -> 
             viewport
         };
         let heights = ui::diff_row_heights(app, area);
-        if std::mem::take(&mut app.reveal_diff) || app.composing() {
+        // A tab-switch seed centers the carried line; any other navigation does the minimal
+        // nudge. Centering wins the frame, so a seeded line isn't yanked to an edge.
+        if std::mem::take(&mut app.center_diff) {
+            app.center_diff_cursor(effective);
+        } else if std::mem::take(&mut app.reveal_diff) || app.composing() {
             app.reveal_diff_cursor(&heights, effective);
         }
         app.bound_diff_scroll(&heights, effective);

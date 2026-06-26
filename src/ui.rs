@@ -378,7 +378,7 @@ pub fn hit_header(area: Rect, app: &App, col: u16, row: u16) -> Option<HeaderHit
 
 /// The two tabs and their labels, left to right. All-ASCII labels keep the byte length equal
 /// to the display width, so the header column math stays simple.
-const TABS: [(Tab, &str); 2] = [(Tab::Changes, "Changes"), (Tab::AllFiles, "All files")];
+const TABS: [(Tab, &str); 2] = [(Tab::Changes, "1 Changes"), (Tab::AllFiles, "2 All files")];
 const HEADER_LEAD: &str = " ";
 const TAB_GAP: &str = "  ";
 const HEADER_GAP: &str = "  ";
@@ -413,7 +413,12 @@ fn send_button(app: &App) -> String {
 
 fn render_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
     let chip = scope_chip(app);
-    let suffix = format!("  {} file(s)", app.changed_count());
+    // The count is the active scope's changeset on both tabs; name it `changed` in `All files`
+    // so it doesn't read as a miscount of the whole-worktree tree beside it.
+    let suffix = match app.tab {
+        Tab::AllFiles => format!("  {} changed", app.changed_count()),
+        Tab::Changes => format!("  {} file(s)", app.changed_count()),
+    };
     let button = send_button(app);
     let used = header_prefix_len() + chip.len() + suffix.len() + button.len();
     let pad = (area.width as usize).saturating_sub(used);
@@ -426,10 +431,12 @@ fn render_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
         if i > 0 {
             spans.push(Span::styled(TAB_GAP, bar));
         }
+        // The active tab is bright + underlined so the bar reads as tabs; the inactive one sits
+        // at `SUBTEXT0` (available), not the `OVERLAY0` disabled tone.
         let style = if *tab == app.tab {
-            bar.fg(cat::LAVENDER).add_modifier(Modifier::BOLD)
+            bar.fg(cat::LAVENDER).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
-            bar.fg(cat::OVERLAY0)
+            bar.fg(cat::SUBTEXT0)
         };
         spans.push(Span::styled(*label, style));
     }
@@ -449,8 +456,11 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, area);
 
     if app.file_rows.is_empty() {
-        let msg =
-            if app.awaiting_turn() { "waiting for the agent's next turn" } else { "no changes" };
+        let msg = match app.tab {
+            Tab::AllFiles => "no files",
+            Tab::Changes if app.awaiting_turn() => "waiting for the agent's next turn",
+            Tab::Changes => "no changes",
+        };
         frame.render_widget(dim_paragraph(msg), inner);
         return;
     }
@@ -655,14 +665,21 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, area);
 
     if app.visible.is_empty() {
-        let msg = if app.awaiting_turn() {
-            "waiting for the agent's next turn"
-        } else {
-            match app.diff.state {
+        // `All files` is a content browser, not a diff, so its empty/notice copy avoids diff
+        // vocabulary and never shows the last-turn "waiting" state.
+        let msg = match app.tab {
+            Tab::AllFiles => match app.diff.state {
+                FileState::Binary => "binary — no line comments",
+                FileState::TooLarge => "file too large",
+                FileState::Normal if app.diff_path.is_some() => "empty file",
+                FileState::Normal => "select a file to read",
+            },
+            Tab::Changes if app.awaiting_turn() => "waiting for the agent's next turn",
+            Tab::Changes => match app.diff.state {
                 FileState::Binary => "binary — no line comments",
                 FileState::TooLarge => "file too large to diff",
                 FileState::Normal => "no diff",
-            }
+            },
         };
         frame.render_widget(dim_paragraph(msg), inner);
         return;
@@ -1073,13 +1090,14 @@ fn render_composer(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let left = format!(" {} file(s) · {} comment(s) ", app.changed_count(), app.store.len());
+    let count_label = if app.tab == Tab::AllFiles { "changed" } else { "file(s)" };
+    let left = format!(" {} {count_label} · {} comment(s) ", app.changed_count(), app.store.len());
     let mid = if app.status.is_empty() { String::new() } else { format!("· {} ", app.status) };
     let hints = match app.mode {
         Mode::Composing { .. } => "enter save · alt/shift+enter newline · esc cancel",
         Mode::List => "↑↓ move · s send · y copy · e edit · d delete · esc close",
         Mode::Normal => {
-            "tab focus · u/b/t scope · v select · c comment · s send · y copy · n/N jump · l list · r refresh · q quit"
+            "1/2 tab · ⇥ pane · u/b/t scope · v select · c comment · s send · y copy · n/N jump · l list · r refresh · q quit"
         }
     };
     let line = Line::from(vec![
