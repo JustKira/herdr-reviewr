@@ -34,17 +34,24 @@ case "$os-$arch" in
 esac
 
 archive="${NAME}-${target}.tar.gz"
+# taiki-e's checksum sidecar drops the archive extension: <name>-<target>.sha256, not <archive>.sha256.
+checksum="${NAME}-${target}.sha256"
 base="https://github.com/${REPO}/releases/download/${TAG}"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# Release-asset downloads are eventually-consistent: GitHub's CDN can 404 for a few minutes
+# after a release publishes, even though the asset exists. Retry (incl. on 404) so an install
+# right after a release doesn't fail spuriously.
+dl() { curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --retry-connrefused "$1" -o "$2"; }
+
 echo "$NAME: downloading $archive ($TAG)"
-curl -fsSL "$base/$archive" -o "$tmp/$archive"
-curl -fsSL "$base/$archive.sha256" -o "$tmp/$archive.sha256"
+dl "$base/$archive" "$tmp/$archive"
+dl "$base/$checksum" "$tmp/$checksum"
 
 echo "$NAME: verifying checksum"
-expected="$(awk '{print $1}' "$tmp/$archive.sha256")"
+expected="$(awk '{print $1}' "$tmp/$checksum")"
 if command -v sha256sum >/dev/null 2>&1; then
   actual="$(sha256sum "$tmp/$archive" | awk '{print $1}')"
 else
