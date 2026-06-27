@@ -85,12 +85,6 @@ pub enum Mode {
 pub struct App {
     pub repo: PathBuf,
     pub base: Option<String>,
-    /// gitignore-glob patterns from `config.toml` whose ignored paths are reviewable
-    /// (specs/config.md). Empty unless a config file sets `keep`.
-    pub keep: Vec<String>,
-    /// The `config.toml` to re-read on each reload; `None` when no config dir is set
-    /// (the default in tests and outside a herdr pane).
-    pub config_path: Option<PathBuf>,
     pub scope: Scope,
     /// The active tab; it drives both panes and selects the per-tab state in play.
     pub tab: Tab,
@@ -173,8 +167,6 @@ impl App {
         Self {
             repo,
             base,
-            keep: Vec::new(),
-            config_path: None,
             scope,
             tab: Tab::Changes,
             focus: Focus::Files,
@@ -318,20 +310,6 @@ impl App {
         Ok(entries)
     }
 
-    /// Re-read `keep` from the config file (`specs/config.md`). A missing file resets to
-    /// defaults; a malformed one keeps defaults and reports a status notice rather than
-    /// failing the reload.
-    fn load_config(&mut self) {
-        let Some(path) = self.config_path.clone() else { return };
-        match crate::config::load_keep(&path) {
-            Ok(keep) => self.keep = keep,
-            Err(msg) => {
-                self.keep = Vec::new();
-                self.status = format!("config.toml: {msg}");
-            }
-        }
-    }
-
     /// Never touches the comment store or the in-progress input — that is the
     /// "a comment is never lost to a refresh" invariant (`specs/overview.md`).
     pub fn reload(&mut self) -> Result<()> {
@@ -350,8 +328,6 @@ impl App {
             }
             return Ok(());
         }
-        // Re-read the config so an edit to `keep` takes effect on this reload (config.md).
-        self.load_config();
         // Keep the cursor on the same row target across the rebuild; fall back to the open
         // file, then the first file. The toggled-directory set survives untouched.
         let anchor = self.cursor_anchor();
@@ -362,10 +338,10 @@ impl App {
         // is observed (specs/review-model.md).
         let changed = match self.scope {
             Scope::LastTurn => match self.turn.baseline() {
-                Some(t) => git::changed_against_tree(&self.repo, t, &self.keep)?,
+                Some(t) => git::changed_against_tree(&self.repo, t)?,
                 None => Vec::new(),
             },
-            _ => git::changed_files(&self.repo, self.scope, self.base.as_deref(), &self.keep)?,
+            _ => git::changed_files(&self.repo, self.scope, self.base.as_deref())?,
         };
         self.changed = changed.iter().map(|f| (f.path.clone(), Annotation::from(f))).collect();
         self.entries = match self.tab {
@@ -570,7 +546,7 @@ impl App {
     pub fn apply_agent_status(&mut self, status: Option<&str>) {
         let Some(status) = status else { return };
         if self.turn.observe(Status::parse(status)) {
-            match git::snapshot_worktree(&self.repo, &self.keep) {
+            match git::snapshot_worktree(&self.repo) {
                 Ok(sha) => self.turn.set_candidate(sha),
                 Err(e) => logln!("turn snapshot failed: {e}"),
             }
@@ -578,7 +554,7 @@ impl App {
         // Promote the pending candidate once the turn has changed a file. Compare full
         // snapshots so a new untracked file counts as a change (specs/herdr-host.md).
         let Some(candidate) = self.turn.candidate().map(str::to_string) else { return };
-        match git::snapshot_worktree(&self.repo, &self.keep) {
+        match git::snapshot_worktree(&self.repo) {
             Ok(now) if now != candidate => {
                 self.turn.promote();
                 if let Err(e) = git::write_baseline_ref(&self.repo, &self.turn_key, &candidate) {

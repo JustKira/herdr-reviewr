@@ -50,10 +50,8 @@ Because the base is an ancestor of `HEAD`, `branch` is a superset of `uncommitte
 
 ### Ignored paths
 
-Every scope respects `.gitignore`: a path git ignores is not a change. The keep list (`config.md`) is the one exception — an ignored path matching a `keep` pattern is treated as untracked, so it lists as an addition wherever an untracked file would.
+Every scope respects `.gitignore`, without exception: a path git ignores is not a change, so build output (`target/`, `node_modules/`) never enters `Changes`. To make a file reviewable, track it — an ignored file you intend to review (a plan, a sample env) belongs in git, where it lists and ages out like any other tracked change.
 
-- So build output (`target/`, `node_modules/`) never enters `Changes`, while an opted-in path like `docs/plans/` shows as a change across all three scopes.
-- A kept path lists exactly as an untracked file does — `untracked` kind, all additions, anchored on `side: new`.
 - This gates `Changes` only; `All files` lists every file regardless, ignored dimmed (`file-list.md`).
 
 ### Turn baseline
@@ -164,7 +162,7 @@ Export is the only side effect, and comments are in-memory.
 - Flag stale comments, never auto-drop — silently losing a comment destroys trust and forces you to wait for the agent to stop; a comment is removed only by export or delete.
 - Send to the agent, with clipboard secondary — the fill-input-and-focus flow is the asked-for path; clipboard stays for paste-anywhere and remote.
 - One Send, not send-one vs send-all — the workflow is "write a few comments, then hand them over"; a per-comment send is a needless choice on the hot path, so `Send` always takes the whole set (`Copy` likewise).
-- Kept ignored paths count as changes; other ignored paths never do — gitignore conflates build output with intentional non-versioned files (plans, generated configs), so the keep list (`config.md`) opts specific ignored paths into `Changes` without dragging in build churn. Rejected: listing all ignored files in `Changes`; a built-in build-dir skip-list, which is a guess that is always slightly wrong.
+- Ignored paths never count as changes — `Changes` follows git's own bookkeeping exactly, so the only thing that surfaces is what git would track. A file you want reviewed gets tracked (the project commits its plans); reviewr does not second-guess `.gitignore`. Rejected: a `keep` opt-in list and a built-in build-dir skip-list, both of which re-litigate gitignore and accumulate stale entries (a kept plan has no baseline, so it lists as an addition forever).
 - `branch` spans the worktree, not only commits — it diffs the merge-base against the working tree (untracked included), so it shows every change the branch carries over its base and is a superset of `uncommitted`. A committed-only range goes empty whenever the agent's work is uncommitted — the common case in live review, and the state the scope most needs to show. Rejected: `merge-base...HEAD`, committed-only.
 - `last-turn` anchors to the most recent change-producing turn, not every turn — re-baselining on every turn start would blank the view after any text-only turn (a question, a plan); holding the baseline until a turn actually edits a file keeps the last real diff on screen. Rejected: re-baseline on every idle→working edge.
 - A comment can anchor to file content, not only a diff — the `All files` tab comments on code the agent did not touch (a missed call site), so an anchor may be plain content with `side` always `new`. Rejected: restricting comments to changed lines.

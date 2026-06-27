@@ -76,7 +76,7 @@ The list is a flat sequence of visible rows over the tree; a row is a directory 
 ### Presentation
 
 - A file row is `<marker> <name> <stats>`: the change marker colored by kind, the basename bright with its parent directories dimmed, and `+a −d` stats right-aligned against the pane edge.
-- An `All files` row git ignores renders the whole row dimmed, distinct from the change-marker colors; a kept ignored path (`config.md`) is dimmed the same way and is told apart only by appearing in `Changes`.
+- An `All files` row git ignores renders the whole row dimmed, distinct from the change-marker colors. `All files` is the one place to read an ignored path; since every scope respects `.gitignore` (`review-model.md`), an ignored file never carries a change marker.
 - When the row is too narrow, the path shortens with a middle ellipsis (`…/2026-06-23-changes/plan`) so both the basename and the stats stay visible.
 
 ## Non-goals
@@ -101,5 +101,4 @@ The list is a flat sequence of visible rows over the tree; a row is a directory 
 ## Related specs
 
 - `./review-model.md`
-- `./config.md`
 - `./tui.md`

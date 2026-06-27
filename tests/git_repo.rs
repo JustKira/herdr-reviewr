@@ -29,7 +29,7 @@ fn lists_every_change_kind_with_stats() {
     r.remove("gone.rs"); // delete
     r.write("untracked.rs", "u\n"); // untracked
 
-    let files = changed_files(r.path(), Scope::Uncommitted, None, &[]).unwrap();
+    let files = changed_files(r.path(), Scope::Uncommitted, None).unwrap();
     let files = by_path(&files);
 
     assert_eq!(files["edit.rs"].kind, ChangeKind::Modified);
@@ -60,7 +60,7 @@ fn file_content_is_empty_for_a_path_absent_at_that_rev() {
 
     // An added/untracked file has no old side, so its HEAD content is empty.
     assert_eq!(file_content(r.path(), "HEAD", "fresh.rs"), "");
-    let files = changed_files(r.path(), Scope::Uncommitted, None, &[]).unwrap();
+    let files = changed_files(r.path(), Scope::Uncommitted, None).unwrap();
     assert_eq!(by_path(&files)["fresh.rs"].additions, 2);
 }
 
@@ -88,14 +88,14 @@ fn branch_scope_is_a_superset_of_uncommitted() {
     r.write("dirty.rs", "wip\n"); // uncommitted edit
     r.write("untracked.rs", "scratch\n"); // untracked, not yet added
 
-    let branch = changed_files(r.path(), Scope::Branch, Some("main"), &[]).unwrap();
+    let branch = changed_files(r.path(), Scope::Branch, Some("main")).unwrap();
     let names: Vec<&str> = branch.iter().map(|f| f.path.as_str()).collect();
     assert!(names.contains(&"committed.rs"), "branch shows committed work");
     assert!(names.contains(&"dirty.rs"), "branch shows uncommitted edits");
     assert!(names.contains(&"untracked.rs"), "branch shows untracked files");
 
     // Branch is a superset of uncommitted.
-    let uncommitted = changed_files(r.path(), Scope::Uncommitted, None, &[]).unwrap();
+    let uncommitted = changed_files(r.path(), Scope::Uncommitted, None).unwrap();
     for f in &uncommitted {
         assert!(names.contains(&f.path.as_str()), "branch contains uncommitted {}", f.path);
     }
@@ -110,48 +110,34 @@ fn branch_scope_equals_uncommitted_when_head_is_the_base() {
     r.commit_all("base");
     r.write("base.rs", "1\nchanged\n"); // uncommitted edit to a tracked file
 
-    let branch = changed_files(r.path(), Scope::Branch, Some("main"), &[]).unwrap();
+    let branch = changed_files(r.path(), Scope::Branch, Some("main")).unwrap();
     assert!(branch.iter().any(|f| f.path == "base.rs"), "branch is not empty at the base");
 }
 
 #[test]
-fn keep_surfaces_an_ignored_path_in_changes_but_not_other_ignored() {
+fn ignored_paths_never_enter_changes() {
     let r = Repo::init();
     r.write(".gitignore", "ignored/\nbuild/\n");
     r.commit_all("init");
-    r.write("ignored/note.md", "keep me\n"); // ignored, opted in
-    r.write("build/out.o", "junk\n"); // ignored, not opted in
+    r.write("ignored/note.md", "scratch\n");
+    r.write("build/out.o", "junk\n");
 
-    let keep = vec!["ignored/".to_string()];
-    let files = changed_files(r.path(), Scope::Uncommitted, None, &keep).unwrap();
-    let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    assert!(names.contains(&"ignored/note.md"), "a kept ignored path shows in changes");
-    assert!(!names.iter().any(|n| n.starts_with("build/")), "other ignored output stays out");
-    assert_eq!(
-        by_path(&files)["ignored/note.md"].kind,
-        ChangeKind::Untracked,
-        "lists as untracked"
+    // Every scope respects .gitignore, without exception: a path git ignores is not a
+    // change. To review a file, track it (specs/review-model.md).
+    let has_ignored = |files: &[ChangedFile]| {
+        files.iter().any(|f| f.path.starts_with("ignored/") || f.path.starts_with("build/"))
+    };
+    assert!(
+        !has_ignored(&changed_files(r.path(), Scope::Uncommitted, None).unwrap()),
+        "uncommitted"
     );
+    assert!(!has_ignored(&changed_files(r.path(), Scope::Branch, Some("main")).unwrap()), "branch");
 
-    // Without keep, the ignored path never appears.
-    let bare = changed_files(r.path(), Scope::Uncommitted, None, &[]).unwrap();
-    assert!(!bare.iter().any(|f| f.path == "ignored/note.md"), "no keep, no kept file");
-}
-
-#[test]
-fn keep_surfaces_an_ignored_path_in_last_turn() {
-    let r = Repo::init();
-    r.write(".gitignore", "ignored/\n");
-    r.write("ignored/note.md", "v1\n");
-    r.commit_all("init"); // .gitignore committed; note stays ignored, uncommitted
-    let keep = vec!["ignored/".to_string()];
-
-    // The baseline captures the kept file at v1; the turn changes it to v2.
-    let base = snapshot_worktree(r.path(), &keep).unwrap();
-    r.write("ignored/note.md", "v2\n");
-
-    let files = changed_against_tree(r.path(), &base, &keep).unwrap();
-    assert!(files.iter().any(|f| f.path == "ignored/note.md"), "a kept change shows in last-turn");
+    // last-turn: even an ignored file that changes within the turn stays out, because the
+    // baseline snapshot and the live snapshot both honor .gitignore.
+    let base = snapshot_worktree(r.path()).unwrap();
+    r.write("ignored/note.md", "scratch v2\n");
+    assert!(!has_ignored(&changed_against_tree(r.path(), &base).unwrap()), "last-turn");
 }
 
 #[test]
@@ -165,7 +151,7 @@ fn branch_scope_falls_back_to_master_when_main_is_absent() {
     r.commit_all("feature work");
 
     // base = None → the fallback chain (origin/main, origin/master, main, master) finds master.
-    let files = changed_files(r.path(), Scope::Branch, None, &[]).unwrap();
+    let files = changed_files(r.path(), Scope::Branch, None).unwrap();
     assert!(files.iter().any(|f| f.path == "feature.rs"), "resolved master as the base ref");
 }
 
@@ -176,7 +162,7 @@ fn rename_is_reported_at_the_new_path() {
     r.commit_all("init");
     r.git(&["mv", "old_name.rs", "new_name.rs"]);
 
-    let files = changed_files(r.path(), Scope::Uncommitted, None, &[]).unwrap();
+    let files = changed_files(r.path(), Scope::Uncommitted, None).unwrap();
     let renamed = files.iter().find(|f| f.kind == ChangeKind::Renamed).expect("a renamed file");
     assert_eq!(renamed.path, "new_name.rs");
     // The old path is carried so the diff can read the old content and show `old → new`.
@@ -193,7 +179,7 @@ fn a_directory_removing_rename_keeps_its_stats() {
     r.git(&["mv", "a/b/file.rs", "a/file.rs"]);
     r.write("a/file.rs", "one\nTWO\nthree\nfour\nfive\nsix\n"); // small edit keeps it a rename
 
-    let files = changed_files(r.path(), Scope::Uncommitted, None, &[]).unwrap();
+    let files = changed_files(r.path(), Scope::Uncommitted, None).unwrap();
     let renamed = files.iter().find(|f| f.kind == ChangeKind::Renamed).expect("a renamed file");
     assert_eq!(renamed.path, "a/file.rs");
     assert_eq!(renamed.previous_path.as_deref(), Some("a/b/file.rs"));
@@ -208,7 +194,7 @@ fn untracked_paths_with_spaces_survive_verbatim() {
     r.commit_all("init");
     r.write("a file with spaces.rs", "u\n");
 
-    let files = changed_files(r.path(), Scope::Uncommitted, None, &[]).unwrap();
+    let files = changed_files(r.path(), Scope::Uncommitted, None).unwrap();
     let f = by_path(&files)["a file with spaces.rs"];
     assert_eq!(f.kind, ChangeKind::Untracked);
     assert_eq!(f.additions, 1);
@@ -224,7 +210,7 @@ fn untracked_files_in_a_new_directory_are_listed_individually() {
     r.write("docs/new/a.md", "alpha\n");
     r.write("docs/new/b.md", "beta\n");
 
-    let files = changed_files(r.path(), Scope::Uncommitted, None, &[]).unwrap();
+    let files = changed_files(r.path(), Scope::Uncommitted, None).unwrap();
     let by = by_path(&files);
     assert!(by.contains_key("docs/new/a.md"), "the file is listed, not the directory");
     assert!(by.contains_key("docs/new/b.md"));
@@ -238,7 +224,7 @@ fn a_repo_with_no_commits_lists_untracked_without_erroring() {
     // Diffing against the empty tree lets a commitless repo list its files instead.
     let r = Repo::init();
     r.write("fresh.rs", "one\ntwo\n");
-    let files = changed_files(r.path(), Scope::Uncommitted, None, &[]).unwrap();
+    let files = changed_files(r.path(), Scope::Uncommitted, None).unwrap();
     assert!(by_path(&files).contains_key("fresh.rs"), "lists files in a commitless repo");
 }
 
@@ -249,7 +235,7 @@ fn a_binary_change_lists_with_zero_stats() {
     r.commit_all("init");
     r.write("blob.bin", "\0\0changed\0\0\0");
 
-    let files = changed_files(r.path(), Scope::Uncommitted, None, &[]).unwrap();
+    let files = changed_files(r.path(), Scope::Uncommitted, None).unwrap();
     let f = by_path(&files)["blob.bin"];
     assert_eq!(f.kind, ChangeKind::Modified);
     assert_eq!((f.additions, f.deletions), (0, 0));
@@ -265,9 +251,9 @@ fn git_access_never_mutates_the_repo() {
     let head_before = r.git(&["rev-parse", "HEAD"]);
     let status_before = r.git(&["status", "--porcelain"]);
 
-    let _ = changed_files(r.path(), Scope::Uncommitted, None, &[]).unwrap();
+    let _ = changed_files(r.path(), Scope::Uncommitted, None).unwrap();
     let _ = file_content(r.path(), "HEAD", "a.rs");
-    let _ = changed_files(r.path(), Scope::Branch, Some("main"), &[]).unwrap();
+    let _ = changed_files(r.path(), Scope::Branch, Some("main")).unwrap();
 
     assert_eq!(head_before, r.git(&["rev-parse", "HEAD"]), "HEAD unchanged");
     assert_eq!(status_before, r.git(&["status", "--porcelain"]), "working tree unchanged");
@@ -283,7 +269,7 @@ fn changed_against_tree_shows_edits_creates_and_deletes_since_the_snapshot() {
     r.commit_all("init");
     r.write("idle_untracked.rs", "u\n"); // untracked already at snapshot time
 
-    let base = snapshot_worktree(r.path(), &[]).unwrap();
+    let base = snapshot_worktree(r.path()).unwrap();
 
     // The turn: edit a tracked file, create a new file, delete one, and leave the
     // pre-existing untracked file untouched.
@@ -291,7 +277,7 @@ fn changed_against_tree_shows_edits_creates_and_deletes_since_the_snapshot() {
     r.write("created.rs", "new\n");
     r.remove("doomed.rs");
 
-    let files = changed_against_tree(r.path(), &base, &[]).unwrap();
+    let files = changed_against_tree(r.path(), &base).unwrap();
     let files = by_path(&files);
     assert_eq!(files["tracked.rs"].kind, ChangeKind::Modified);
     assert_eq!(files["created.rs"].kind, ChangeKind::Added);
@@ -309,9 +295,9 @@ fn changed_against_tree_sees_an_untracked_only_turn() {
     let r = Repo::init();
     r.write("a.rs", "a\n");
     r.commit_all("init");
-    let base = snapshot_worktree(r.path(), &[]).unwrap();
+    let base = snapshot_worktree(r.path()).unwrap();
     r.write("fresh.rs", "x\n");
-    let files = changed_against_tree(r.path(), &base, &[]).unwrap();
+    let files = changed_against_tree(r.path(), &base).unwrap();
     assert_eq!(by_path(&files)["fresh.rs"].kind, ChangeKind::Added);
 }
 
@@ -331,7 +317,7 @@ fn snapshot_worktree_never_mutates_the_repo() {
     let head_before = r.git(&["rev-parse", "HEAD"]);
     let branches_before = r.git(&["branch", "-a"]);
 
-    let tree = snapshot_worktree(r.path(), &[]).unwrap();
+    let tree = snapshot_worktree(r.path()).unwrap();
     assert_eq!(tree.len(), 40, "a tree object id");
 
     assert_eq!(r.git(&["ls-files", "--stage"]), staged_before, "real index entries untouched");
@@ -349,7 +335,7 @@ fn baseline_ref_round_trips_under_the_private_namespace() {
     let key = worktree_key(r.path());
     assert!(read_baseline_ref(r.path(), &key).is_none(), "no baseline initially");
 
-    let tree = snapshot_worktree(r.path(), &[]).unwrap();
+    let tree = snapshot_worktree(r.path()).unwrap();
     write_baseline_ref(r.path(), &key, &tree).unwrap();
     assert_eq!(read_baseline_ref(r.path(), &key).as_deref(), Some(tree.as_str()));
 

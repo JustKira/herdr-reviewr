@@ -17,6 +17,3 @@ Cargo.lock.bak
 
 # Prebuilt binary dropped by herdr/install.sh on `herdr plugin install`
 /bin/
-
-# Internal milestone plans — design history lives in specs/, not here
-/docs/plans/

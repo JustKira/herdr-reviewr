@@ -82,23 +82,10 @@ CLI flags on the pane command:
 | `--theme <name>` | Catppuccin Mocha | **syntax** theme (structural UI colors are fixed) |
 | `--wrap` | off | soft-wrap long diff lines |
 
-### `config.toml`
-
-reviewr reads a `config.toml` from herdr's per-plugin config dir — find it with
-`herdr plugin config-dir persiyanov.reviewr` (typically
-`~/.config/herdr/plugins/config/persiyanov.reviewr/`). It is re-read on `r`.
-
-```toml
-# Ignored paths that should still be reviewable. gitignore glob syntax.
-keep = [
-  "docs/plans/",
-  ".env.example",
-]
-```
-
-`keep` opts gitignored paths into the **Changes** tab as if they were untracked, so an
-ignored-but-intentional file (a plan, a sample env) shows up for review while build output
-stays out. It is global to every repo you open and is never committed.
+Every scope respects `.gitignore`, so build output never clutters **Changes**. To review a
+file, track it in git — an ignored-but-intentional file (a plan, a sample env) belongs in the
+repo, where it shows as a change and ages out once committed. **All files** can still browse any
+ignored path (dimmed), even untracked ones.
 
 ## Limitations
 

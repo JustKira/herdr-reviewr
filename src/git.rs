@@ -120,7 +120,7 @@ pub fn file_content(repo: &Path, rev: &str, path: &str) -> String {
 /// from the repo's real index so unchanged files keep their cached hash, then `add -A`
 /// and `write-tree`. Captures staged, unstaged, and untracked content alike. Touches
 /// only the object database and the temp index — never the real index or any ref.
-pub fn snapshot_worktree(repo: &Path, keep: &[String]) -> Result<String> {
+pub fn snapshot_worktree(repo: &Path) -> Result<String> {
     let git_dir = PathBuf::from(git(repo, &["rev-parse", "--absolute-git-dir"])?.trim());
     let tmp_index = git_dir.join("reviewr-turn-index");
     let real_index = git_dir.join("index");
@@ -134,14 +134,6 @@ pub fn snapshot_worktree(repo: &Path, keep: &[String]) -> Result<String> {
         std::fs::copy(&real_index, &tmp_index).context("seeding the snapshot index")?;
     }
     git_with_index(repo, &tmp_index, &["add", "-A"])?;
-    // `add -A` honors .gitignore, so kept ignored paths (config.md) are skipped; force them
-    // in so the last-turn diff sees changes to opted-in ignored files too.
-    let kept = kept_files(repo, keep);
-    if !kept.is_empty() {
-        let mut args: Vec<&str> = vec!["add", "-f", "--"];
-        args.extend(kept.iter().map(String::as_str));
-        git_with_index(repo, &tmp_index, &args)?;
-    }
     let tree = git_with_index(repo, &tmp_index, &["write-tree"])?;
     Ok(tree.trim().to_string())
 }
@@ -216,12 +208,7 @@ fn diff_base(repo: &Path) -> String {
 
 /// The changed files for `scope`, sorted by path. `base` overrides the branch base ref.
 /// `last-turn` is resolved separately by [`changed_against_tree`], so it lists nothing here.
-pub fn changed_files(
-    repo: &Path,
-    scope: Scope,
-    base: Option<&str>,
-    keep: &[String],
-) -> Result<Vec<ChangedFile>> {
+pub fn changed_files(repo: &Path, scope: Scope, base: Option<&str>) -> Result<Vec<ChangedFile>> {
     let (numstat, name_status) = match scope {
         Scope::Uncommitted => {
             // A repo with no commits has no HEAD; diff against the empty tree so a fresh
@@ -242,9 +229,9 @@ pub fn changed_files(
         Scope::LastTurn => return Ok(Vec::new()),
     };
     // Branch diffs against the worktree, so like uncommitted it carries untracked files
-    // that `git diff` never reports — and the kept ignored paths (config.md) alongside them.
+    // that `git diff` never reports.
     let include_untracked = matches!(scope, Scope::Uncommitted | Scope::Branch);
-    assemble(repo, &numstat, &name_status, include_untracked, keep)
+    assemble(repo, &numstat, &name_status, include_untracked)
 }
 
 /// The changed files between the turn baseline `tree` and the live worktree, for
@@ -253,12 +240,11 @@ pub fn changed_files(
 /// deletion for a file that is untracked at both ends (which a tree-vs-worktree diff
 /// would mis-report). Untracked files ride in the current snapshot, so no separate
 /// untracked pass is needed.
-pub fn changed_against_tree(repo: &Path, tree: &str, keep: &[String]) -> Result<Vec<ChangedFile>> {
-    let current = snapshot_worktree(repo, keep)?;
+pub fn changed_against_tree(repo: &Path, tree: &str) -> Result<Vec<ChangedFile>> {
+    let current = snapshot_worktree(repo)?;
     let numstat = git(repo, &["diff", tree, &current, "--numstat", "-z"])?;
     let name_status = git(repo, &["diff", tree, &current, "--name-status", "-z"])?;
-    // Kept paths already ride in both trees, so the diff carries them; no separate pass.
-    assemble(repo, &numstat, &name_status, false, &[])
+    assemble(repo, &numstat, &name_status, false)
 }
 
 /// One entry in the `All files` worktree listing: a path plus whether git ignores it and
@@ -332,14 +318,12 @@ pub fn list_ignored_dir(repo: &Path, dir: &str) -> Vec<WorktreeEntry> {
 }
 
 /// Build the sorted `ChangedFile` list from `git diff` numstat + name-status output,
-/// optionally appending untracked files (which a `git diff` never reports) and the kept
-/// ignored paths that match `keep` (config.md).
+/// optionally appending untracked files (which a `git diff` never reports).
 fn assemble(
     repo: &Path,
     numstat: &str,
     name_status: &str,
     include_untracked: bool,
-    keep: &[String],
 ) -> Result<Vec<ChangedFile>> {
     let counts = parse_numstat(numstat);
     let mut seen = HashSet::new();
@@ -353,9 +337,8 @@ fn assemble(
     }
 
     if include_untracked {
-        // Untracked-not-ignored, then the kept ignored paths — both list as additions.
-        let untracked = untracked(repo)?.into_iter().chain(kept_files(repo, keep));
-        for path in untracked {
+        // Untracked-not-ignored files list as additions.
+        for path in untracked(repo)? {
             if seen.insert(path.clone()) {
                 let additions = untracked_additions(repo, &path);
                 files.push(ChangedFile {
@@ -371,20 +354,6 @@ fn assemble(
 
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
-}
-
-/// Untracked-but-ignored files matching the `keep` patterns (config.md), empty when `keep`
-/// is. Each pattern is handed to `git ls-files` as an `--exclude`, so git's own gitignore
-/// engine does the matching — no glob dependency, exact gitignore semantics.
-fn kept_files(repo: &Path, keep: &[String]) -> Vec<String> {
-    if keep.is_empty() {
-        return Vec::new();
-    }
-    let mut args: Vec<String> =
-        vec!["ls-files".into(), "-z".into(), "--others".into(), "--ignored".into()];
-    args.extend(keep.iter().map(|p| format!("--exclude={p}")));
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    git_lenient(repo, &refs).split('\0').filter(|s| !s.is_empty()).map(String::from).collect()
 }
 
 /// Untracked file paths from `git status --porcelain -z --untracked-files=all`. The `-z`

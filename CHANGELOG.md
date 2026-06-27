@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-06-27
+
+### Removed
+- **`config.toml` and its `keep` list** — reviewr no longer opts git-ignored paths into the
+  **Changes** tab. A kept ignored path had no baseline in the commit scopes, so it listed as an
+  addition forever — every milestone plan piled up and never cleared. Now **every scope respects
+  `.gitignore` without exception**: to review a file, track it. A `keep` entry in an existing
+  `config.toml` is now ignored (the file is no longer read).
+
+### Changed
+- **Plans are tracked, not ignored** — `docs/plans/` is removed from `.gitignore`, so a plan
+  shows in **Changes** while uncommitted and ages out once committed, like any tracked file.
+  **All files** still browses every ignored path (dimmed).
+
 ## [0.2.0] — 2026-06-26
 
 ### Added
