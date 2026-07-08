@@ -1,7 +1,7 @@
 ---
 Status: Current
 Created: 2026-06-23
-Last edited: 2026-07-02
+Last edited: 2026-07-08
 ---
 
 # herdr host
@@ -13,6 +13,8 @@ How herdr-reviewr runs inside herdr, finds its repo, sends comments to the agent
 herdr-reviewr ships as a herdr plugin (`herdr-plugin.toml`): a `sidebar` pane entrypoint that runs the binary, a `toggle` action bound to a key, and a `worktree.created` event that auto-opens it for a freshly created worktree. Opening and closing the pane is herdr's job; the binary just runs in it.
 
 The toggle action opens the sidebar with a configurable placement, defaulting to a right split; see [Sidebar placement](#sidebar-placement).
+
+The binary renders before it loads. herdr closes a pane whose process exits and shows a blank grid for one that never renders, so reviewr initializes the terminal and paints its empty frame **before** the first `git` scan. A startup scan that errors or hangs then shows the reviewr UI — the error in the status line, or a frozen-but-visible sidebar for a genuinely hung `git` — never the blank pane herdr would otherwise leave.
 
 The toggle script (`herdr/sidebar.sh`) opens the sidebar for the focused pane's repo, or closes it if one is already open in the workspace (tracked in `HERDR_PLUGIN_STATE_DIR`). It is bound in user config with `[[keys.command]] type = "plugin_action"`. The pane runs the binary by **absolute path** under the plugin root (`$HERDR_PLUGIN_ROOT/bin/herdr-reviewr`), since the pane's cwd is the repo under review, not the plugin root, and the binary is not on `PATH`. On `herdr plugin install` the build step (`herdr/install.sh`) downloads the prebuilt binary for the platform from the matching GitHub Release into that `bin/` dir; `herdr plugin link` skips the build, so a local checkout populates the same `bin/` itself (`cargo build --release && cp target/release/herdr-reviewr bin/`).
 

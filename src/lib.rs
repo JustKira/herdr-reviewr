@@ -60,7 +60,6 @@ pub fn run() -> Result<()> {
     if let Some(wrap) = cfg.wrap {
         app.wrap = wrap;
     }
-    app.reload()?;
 
     let mut terminal = ratatui::init();
     // Bracketed paste so a multi-line paste arrives as one event, not raw keystrokes whose
@@ -75,6 +74,15 @@ pub fn run() -> Result<()> {
             io::stdout(),
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         );
+    }
+    // Render before the first load, so a slow, failing, or hung `git` scan shows the reviewr UI
+    // instead of the blank pane herdr leaves when the process blocks or exits before it renders
+    // (issue #4). Paint the empty frame first; then the initial load, non-fatal — an error opens
+    // the sidebar with the reason in the status line, the same contract as a failed poll refresh.
+    terminal.draw(|f| ui::render(f, &app))?;
+    if let Err(e) = app.reload() {
+        logln!("startup reload failed: {e:#}");
+        app.status = format!("load failed: {e}");
     }
     let result = event_loop(&mut terminal, &mut app, cfg.poll);
     if kbd {

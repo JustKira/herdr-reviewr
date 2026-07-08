@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-07-08
+
+### Fixed
+- **The sidebar no longer opens a blank pane when the first `git` scan is slow, failing, or hung
+  (#4).** reviewr now initializes the terminal and paints before running any `git`, so a startup
+  scan error shows `load failed: …` in the status line and a hung `git` shows a frozen-but-visible
+  sidebar — never the blank pane herdr leaves for a process that blocks or exits before it renders.
+  See `specs/herdr-host.md`.
+
 ## [0.7.0] — 2026-07-08
 
 ### Added
