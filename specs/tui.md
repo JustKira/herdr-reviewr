@@ -59,7 +59,9 @@ The keymap is rebindable per action through `[keybindings]` in the plugin config
 | `scope-uncommitted` / `scope-branch` / `scope-last-turn` | switch scope                                | `u` / `b` / `t`                             | click the scope chip to cycle |
 | `tab-changes` / `tab-all-files` / `tab-pr`               | switch tab                                  | `1` / `2` / `3`                             | click a tab name              |
 | —                                                        | expand the fold under the cursor            | `→`                                         | click the `⋯` row             |
+| —                                                        | open a link in rendered markdown            | —                                           | click the link                |
 | `wrap`                                                   | toggle line wrap                            | `w`                                         | —                             |
+| `preview`                                                | toggle the markdown preview (`All files`)   | `m`                                         | —                             |
 | `list-wider` / `list-narrower`                           | resize the panes                            | `]` / `[`                                   | drag the divider              |
 | `select`                                                 | select a line range, removed lines included | `v` then move                               | click-drag in the diff        |
 | —                                                        | clear the selection                         | `esc`                                       | —                             |
@@ -96,16 +98,18 @@ The bar fills by priority until the width runs out, and a trailing `…` marks a
 
 The actions follow the cursor:
 
-| cursor on                          | primary          | also                    |
-| ---------------------------------- | ---------------- | ----------------------- |
-| a diff line                        | `c comment`      | `v select`              |
-| a live selection                   | `c comment`      | `esc clear`             |
-| a commented line                   | `e edit`         | `d delete · n/N jump`   |
-| a fold                             | `→ expand fold`  | —                       |
-| a file (file list)                 | `⇥ diff`         | —                       |
-| a collapsed directory              | `→ expand`       | —                       |
-| an expanded directory              | `← collapse`     | —                       |
-| nothing to review (awaiting turn)  | `u/b/t scope`    | `r refresh`             |
+| cursor on                                | primary          | also                    |
+| ---------------------------------------- | ---------------- | ----------------------- |
+| a diff line                              | `c comment`      | `v select`              |
+| a line of a markdown file (`All files`)  | `c comment`      | `v select · m preview`  |
+| a live selection                         | `c comment`      | `esc clear`             |
+| a commented line                         | `e edit`         | `d delete · n/N jump`   |
+| a fold                                   | `→ expand fold`  | —                       |
+| an open markdown preview                 | `m source`       | —                       |
+| a file (file list)                       | `⇥ diff`         | —                       |
+| a collapsed directory                    | `→ expand`       | —                       |
+| an expanded directory                    | `← collapse`     | —                       |
+| nothing to review (awaiting turn)        | `u/b/t scope`    | `r refresh`             |
 
 - `u/b/t scope` shows in every `Changes` and `All files` context, except where it is itself the primary.
 - Movement keys are never shown.
@@ -115,7 +119,7 @@ The actions follow the cursor:
 
 ### Tabs
 
-- Each tab owns its state: the open file or card, scroll, cursor, expansions. Nothing carries between tabs.
+- Each tab owns its state: the open file or card, scroll, cursor, expansions, the preview choice. Nothing carries between tabs.
 - Switching away and back restores the tab exactly.
 - A first visit opens the tab's first file or card. A collapsed tree with the cursor on a directory opens nothing until a pick.
 - A tab switch keeps the focused side. An empty left pane focuses the tree.
@@ -127,17 +131,18 @@ A read-only mirror of the pull request in the same two-pane frame: the right pan
 ```
  1 Changes  2 All files  3 PR    Deep research: GPT-5.5/5.4-mini upgrade…  deep-research  merged #226 ↗
 ╭─ @codex · manager.py:115 ──────────────────────────╮╭─ Checks & comments ──────────╮
-│ -    if primary_result.status == PERM_FAILURE:        ││ checks  ✗ 1 failing          │
-│ -        return primary_result                        ││  ✓ build-main-image          │
-│                                                       ││  ✓ review                    │
-│ Avoid falling back after target permanent failures.   ││  ✗ tests                     │
-│ This now attempts a fallback for every non-success…   ││                              │
+│ -    if primary_result.status == PERM_FAILURE:        ││ description                  │
+│ -        return primary_result                        ││                              │
+│                                                       ││ checks  ✗ 1 failing          │
+│ Avoid falling back after target permanent failures.   ││  ✓ build-main-image          │
+│ This now attempts a fallback for every non-success…   ││  ✗ tests                     │
+│                                                       ││                              │
 │                                                       ││ comments · 5                 │
-│                                                       ││▍@you    comment          5m  │
-│                                                       ││ @codex  manager.py:115   2h  │
+│                                                       ││ @you    comment          5m  │
+│                                                       ││▍@codex  manager.py:115   2h  │
 │                                                       ││ @claude review           2h  │
 │                                                       ││ @claude manager.py:39    2h  │
-│                                                       ││ @claude parse.py:187  outdated│
+│                                                       ││ @claude parse.py:187 outdated│
 ╰───────────────────────────────────────────────────────╯╰─────────────────────────────╯
  ⚠ conflicts with main · ⇡ 2 unpushed · ✗ 1 failing · 5 comments   o open ↗   │ 1·2·3 · r · q
 ```
@@ -145,11 +150,14 @@ A read-only mirror of the pull request in the same two-pane frame: the right pan
 - The header right-anchors a clickable `status #226 ↗` chip, status colored by lifecycle: `open` green, `draft` yellow, `merged` mauve, `closed` red. The PR title sits to its left, truncated to fit.
 - Between title and chip sits the resolved head branch (`head_ref`, `forge-host.md`), dim, prefixed `⑂ ` when the head lives in a fork. On a narrow bar the branch drops first.
 - The footer leads with merge, sync, checks, and comment counts. Merge and sync show only while the PR is open. A capped surface appends `+more on GitHub ↗` (`forge-host.md`).
-- The right pane, titled `Checks & comments`, shows a status-only checks section above the comments list. The cursor walks the comments.
+- The right pane, titled `Checks & comments`, shows a status-only checks section above the comments list. The cursor walks the description row and the comments.
 - Comments list newest first, each row `@author anchor age`, with `outdated` or `resolved` markers where GitHub receded the thread.
-- The left pane reads the selected comment: a finding shows its `diff_hunk` then the body, a review or plain comment shows its prose.
+- A non-empty PR description pins a `description` row at the top of the navigator, above the checks. An emptied description vanishes like a comment: the cursor clamps, the read pane resets.
+- The left pane reads the selected comment: a finding shows its `snippet` then the body, a review or plain comment shows its prose, the description row shows the PR description.
+- Bodies render as markdown (`markdown.md`). A finding's `snippet` stays plain `+`/`−`-colored lines.
 - A human author is emphasized over the bots.
-- `j`/`k` or a click selects a comment. `PageUp`/`PageDown` and the wheel scroll the read pane. `o` or the chip opens the PR in the browser.
+- `j`/`k` or a click selects a comment. `PageUp`/`PageDown` and the wheel scroll the read pane, stopping with the last line at the pane's bottom edge. `o` or the chip opens the PR in the browser.
+- A body taller than the read pane shows a scrollbar on the pane's right border. One that fits shows none.
 - The authoring keys (`s`, `c`, `v`, `d`, `e`) do nothing here.
 - A merged or closed PR shows the same mirror, read-only.
 - No open PR, or no usable `gh`, shows the matching empty state from `forge-host.md`, naming the command that unblocks it.
@@ -191,7 +199,7 @@ A plain-text field that edits at the caret, not only at the end. An empty box sh
 - The `PR` tab fetches on open, on entering the tab, on `r`, and on the agent's turn-end while active, with a slow fallback timer. Its cadence is separate from the worktree poll.
 - A PR refetch keeps your place: the cursor follows the selected comment by identity, the read-pane scroll holds. A vanished comment clamps the cursor and resets the read pane.
 - Refresh uses no herdr events. The same poll samples the agent's status for the `last-turn` baseline (`herdr-host.md`).
-- In `last-turn` scope, before a turn start is observed, the list and diff show `waiting for the agent's next turn`, never a stale or whole-worktree diff.
+- In `last-turn` scope, before a turn start is observed, `Changes` shows `waiting for the agent's next turn`, never a stale or whole-worktree diff. `All files` keeps its content.
 
 ## Failure semantics
 
@@ -205,6 +213,7 @@ A plain-text field that edits at the caret, not only at the end. An empty box sh
 
 - No editing, staging, or committing from the UI.
 - No side-by-side split view. The diff is one unified column, split is roadmap.
+- No jump from a PR comment's anchor to the code tabs.
 - No text selection, cut/copy, undo/redo, markdown rendering, or click-to-place-caret in the comment editor.
 - No modifier, named-key, or sequence notation in the keymap. Single characters are the v1 surface.
 
@@ -214,3 +223,4 @@ A plain-text field that edits at the caret, not only at the end. An empty box sh
 - [diff-view](./diff-view.md)
 - [file-list](./file-list.md)
 - [review-model](./review-model.md)
+- [markdown](./markdown.md)

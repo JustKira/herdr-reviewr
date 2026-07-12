@@ -27,6 +27,7 @@ Each concern lives in the one doc that owns it. A change is woven into that doc,
 - `config.md` — owns plugin config keys, validation, application, and failure behavior.
 - `review-model.md` — owns scopes, changed files, comments, lifecycle, and export.
 - `diff-view.md` — owns the structured diff viewer: model, syntax highlighting, word emphasis, folds, and views.
+- `markdown.md` — owns markdown rendering: the elements, their terminal presentation, and the surfaces that render it.
 - `theme.md` — owns the color model: the named palettes, how a palette is filled from anchors, and theme selection.
 - `file-list.md` — owns the right-pane file navigator: the changed-files tree, selection, and presentation.
 - `tui.md` — owns the terminal UI: layout, interaction, and refresh.

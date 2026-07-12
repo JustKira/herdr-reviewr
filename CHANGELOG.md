@@ -4,7 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.13.0] — 2026-07-12
+
+### Added
+- **Markdown rendering.** PR comment bodies and the PR description render as styled markdown —
+  headings, emphasis, lists, quotes, links with dim destinations, tables, and fenced code
+  highlighted with the same syntax theme as the diff panes. A wide table degrades to its source
+  text. Control characters and bidi overrides in bodies render as visible placeholders, never raw.
+- **PR description card.** A non-empty PR description pins a `description` row at the top of
+  the PR tab's navigator, above the checks. Its body reads in the left pane.
+- **Markdown preview in All files.** The `preview` binding (default `m`) toggles a read-only
+  rendered preview on `.md`/`.markdown` files, named `· preview` in the pane title. Source stays
+  the commentable view. The toggle carries your reading position both ways, and an unscrolled
+  round-trip restores the exact cursor and scroll.
+- **Clickable links.** A link in rendered markdown — the preview, the PR description, or a
+  comment body — opens in the browser on click. An anchor link (`#section`) scrolls to its
+  heading instead. Only `http`/`https` destinations open, anything else is inert, and a
+  destination carrying control or bidi characters never reaches the OS.
 
 ## [0.12.0] — 2026-07-12
 

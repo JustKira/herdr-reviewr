@@ -69,6 +69,8 @@ pub struct PrSnapshot {
     pub number: u64,
     pub title: String,
     pub url: String,
+    /// The PR description as GitHub returns it, empty when none (`specs/forge-host.md`).
+    pub body: String,
     pub state: PrState,
     pub is_draft: bool,
     /// The PR's head branch name — the candidate that resolved, which may differ from the
@@ -488,7 +490,7 @@ fn pr_detail(target: &FetchTarget<'_>, number: u64) -> Result<Value, GhError> {
     let q = format!(
         "query($o:String!,$n:String!){{repository(owner:$o,name:$n){{\
          pullRequest(number:{number}){{\
-         number title url isDraft state mergeable mergeStateStatus baseRefName headRefName \
+         number title url body isDraft state mergeable mergeStateStatus baseRefName headRefName \
          headRefOid isCrossRepository \
          commits(last:1){{nodes{{commit{{statusCheckRollup{{contexts(first:100){{pageInfo{{hasNextPage}} nodes{{__typename \
          ... on CheckRun{{name status conclusion}} ... on StatusContext{{context state}}}}}}}}}}}}}} \
@@ -589,6 +591,7 @@ fn build_snapshot(node: &Value, sync: Sync) -> PrSnapshot {
         number: node["number"].as_u64().unwrap_or_default(),
         title: node["title"].as_str().unwrap_or_default().to_string(),
         url: node["url"].as_str().unwrap_or_default().to_string(),
+        body: node["body"].as_str().unwrap_or_default().to_string(),
         state: parse_state(node["state"].as_str().unwrap_or("OPEN")),
         is_draft: node["isDraft"].as_bool().unwrap_or(false),
         head_ref: node["headRefName"].as_str().unwrap_or_default().to_string(),
@@ -857,6 +860,11 @@ mod tests {
             !build_snapshot(&base, Sync::InSync).truncated,
             "all pages complete → not truncated"
         );
+        // The description parses when present and stays empty when GitHub returns null.
+        assert_eq!(build_snapshot(&base, Sync::InSync).body, "");
+        let mut with_body = base.clone();
+        with_body["body"] = serde_json::json!("## Summary\nfixes things");
+        assert_eq!(build_snapshot(&with_body, Sync::InSync).body, "## Summary\nfixes things");
 
         let mut comments_more = base.clone();
         comments_more["comments"]["pageInfo"]["hasNextPage"] = serde_json::json!(true);
@@ -911,6 +919,7 @@ mod tests {
             number: 1,
             title: String::new(),
             url: String::new(),
+            body: String::new(),
             state: PrState::Open,
             is_draft: false,
             head_ref: String::new(),

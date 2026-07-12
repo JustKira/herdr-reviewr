@@ -476,7 +476,7 @@ fn the_footer_offers_scope_everywhere_on_a_file_tab() {
 #[test]
 fn the_pr_footer_offers_open_for_any_resolved_pr() {
     use herdr_reviewr::app::Tab;
-    use herdr_reviewr::forge::{Merge, PrSnapshot, PrState, PrView, Sync};
+    use herdr_reviewr::forge::{PrSnapshot, PrView};
 
     let r = edited_repo();
     let mut app = app_on(&r);
@@ -488,21 +488,7 @@ fn the_pr_footer_offers_open_for_any_resolved_pr() {
     );
 
     // A resolved PR with zero comments still offers `o open` — `o` opens the PR URL, not a comment.
-    app.pr = PrView::Pr(Box::new(PrSnapshot {
-        number: 7,
-        title: "t".into(),
-        url: "u".into(),
-        state: PrState::Open,
-        is_draft: false,
-        head_ref: "feature".into(),
-        head_is_fork: false,
-        base_ref: "main".into(),
-        merge: Merge::Clean,
-        sync: Sync::InSync,
-        checks: vec![],
-        comments: vec![],
-        truncated: false,
-    }));
+    app.pr = PrView::Pr(Box::new(PrSnapshot { number: 7, ..common::pr_snapshot() }));
     assert!(app.pr_selected_comment().is_none(), "zero comments → nothing selected");
     assert_eq!(
         app.footer_actions().first().map(|&(a, _)| a),
@@ -1913,39 +1899,22 @@ fn the_pr_tab_detour_preserves_each_file_tab_state() {
 #[test]
 fn pr_navigator_walks_comments_only_and_clamps() {
     use herdr_reviewr::app::Tab;
-    use herdr_reviewr::forge::{
-        Check, CheckStatus, Comment, CommentKind, Merge, PrSnapshot, PrState, PrView, Sync,
-    };
+    use herdr_reviewr::forge::{Check, CheckStatus, Comment, CommentKind, PrSnapshot, PrView};
 
     let finding = |author: &str| Comment {
         kind: CommentKind::Finding,
         author: author.into(),
         author_is_bot: true,
         anchor: "a.rs:1".into(),
-        body: "b".into(),
-        snippet: None,
-        created_at: "2026-06-27T10:00:00Z".into(),
-        is_resolved: false,
-        is_outdated: false,
-        reply_count: 0,
+        ..common::comment()
     };
     let snap = PrSnapshot {
-        number: 1,
-        title: "t".into(),
-        url: "u".into(),
-        state: PrState::Open,
-        is_draft: false,
-        head_ref: "feature".into(),
-        head_is_fork: false,
-        base_ref: "main".into(),
-        merge: Merge::Clean,
-        sync: Sync::InSync,
         checks: vec![
             Check { name: "build".into(), status: CheckStatus::Success },
             Check { name: "test".into(), status: CheckStatus::Failure },
         ],
         comments: vec![finding("first"), finding("second")],
-        truncated: false,
+        ..common::pr_snapshot()
     };
 
     let r = Repo::init();
@@ -1977,36 +1946,15 @@ fn pr_navigator_walks_comments_only_and_clamps() {
 #[test]
 fn apply_pr_follows_the_selected_comment_across_a_refresh() {
     use herdr_reviewr::app::Tab;
-    use herdr_reviewr::forge::{Comment, CommentKind, Merge, PrSnapshot, PrState, PrView, Sync};
+    use herdr_reviewr::forge::{Comment, PrSnapshot, PrView};
 
     let comment = |author: &str, created: &str| Comment {
-        kind: CommentKind::Comment,
         author: author.into(),
-        author_is_bot: false,
-        anchor: "comment".into(),
-        body: "b".into(),
-        snippet: None,
         created_at: created.into(),
-        is_resolved: false,
-        is_outdated: false,
-        reply_count: 0,
+        ..common::comment()
     };
     let snap = |comments: Vec<Comment>| {
-        PrView::Pr(Box::new(PrSnapshot {
-            number: 1,
-            title: "t".into(),
-            url: "u".into(),
-            state: PrState::Open,
-            is_draft: false,
-            head_ref: "feature".into(),
-            head_is_fork: false,
-            base_ref: "main".into(),
-            merge: Merge::Clean,
-            sync: Sync::InSync,
-            checks: Vec::new(),
-            comments,
-            truncated: false,
-        }))
+        PrView::Pr(Box::new(PrSnapshot { comments, ..common::pr_snapshot() }))
     };
 
     let r = Repo::init();
@@ -2173,4 +2121,242 @@ fn the_pr_remedy_names_the_rebound_refresh_key() {
         "the remedy follows the active refresh binding: {:?}",
         app.pr_notice()
     );
+}
+
+/// A repo with one markdown file and one code file, opened on the `All files` tab.
+/// The `Repo` rides along: dropping it deletes the tempdir under the app.
+fn markdown_app() -> (Repo, App) {
+    use herdr_reviewr::app::Tab;
+    let r = Repo::init();
+    r.write("README.md", "# Title\n\nalpha beta gamma\n");
+    r.write("code.rs", "fn main() {}\n");
+    r.commit_all("init");
+    let mut app = app_on(&r);
+    app.set_tab(Tab::AllFiles).unwrap();
+    assert_eq!(app.diff_path.as_deref(), Some("README.md"), "first file opens");
+    (r, app)
+}
+
+#[test]
+fn the_markdown_preview_toggles_only_on_markdown_files_in_all_files() {
+    use herdr_reviewr::app::Tab;
+    let r = Repo::init();
+    r.write("README.md", "# Title\n");
+    r.commit_all("init");
+    r.write("README.md", "# Title\nmore\n");
+    let mut app = app_on(&r);
+
+    // `Changes` never previews, even with a markdown file open.
+    assert_eq!(app.diff_path.as_deref(), Some("README.md"));
+    app.toggle_preview();
+    assert!(!app.preview_active(), "the toggle is inert on the Changes tab");
+
+    app.set_tab(Tab::AllFiles).unwrap();
+    app.toggle_preview();
+    assert!(app.preview_active(), "a markdown file previews in All files");
+    app.toggle_preview();
+    assert!(!app.preview_active(), "the toggle returns to source");
+}
+
+#[test]
+fn a_non_markdown_file_never_previews() {
+    let (_repo, mut app) = markdown_app();
+    app.move_cursor(1).unwrap(); // the file list is focused; move opens code.rs
+    assert_eq!(app.diff_path.as_deref(), Some("code.rs"));
+    app.toggle_preview();
+    assert!(!app.preview_active(), "the toggle is inert on a non-markdown file");
+}
+
+#[test]
+fn the_preview_is_read_only_and_scrolls_without_touching_the_source() {
+    let (_repo, mut app) = markdown_app();
+    app.focus = Focus::Diff;
+    app.diff_cursor = 2;
+    app.toggle_select();
+    assert!(app.select_anchor.is_some());
+
+    app.toggle_preview();
+    assert!(app.preview_active());
+    assert!(app.select_anchor.is_none(), "entering the preview clears a live selection");
+
+    // Vertical movement scrolls the preview; the source cursor waits untouched.
+    app.move_cursor(3).unwrap();
+    assert_eq!(app.preview_scroll, 3);
+    assert_eq!(app.diff_cursor, 2, "the source cursor is untouched");
+
+    // Authoring and source-view keys are inert.
+    app.toggle_select();
+    assert!(app.select_anchor.is_none(), "no selection in the preview");
+    app.start_comment();
+    assert!(!app.composing(), "no commenting in the preview");
+    app.toggle_wrap();
+    assert!(app.wrap, "the wrap toggle is inert in the preview");
+
+    // Over-scroll stops with the last line at the pane's bottom edge, so scrolling
+    // back responds at once and content that fits the pane does not scroll.
+    app.note_preview_max_scroll(4);
+    app.preview_scroll_by(100);
+    assert_eq!(app.preview_scroll, 4, "scroll stops at the bottom edge");
+    app.preview_scroll_by(-1);
+    assert_eq!(app.preview_scroll, 3, "no dead zone above the clamp");
+    app.note_preview_max_scroll(0);
+    app.preview_scroll_by(1);
+    assert_eq!(app.preview_scroll, 0, "content that fits the pane does not scroll");
+
+    // Returning to source restores the cursor and view state.
+    app.toggle_preview();
+    assert_eq!(app.diff_cursor, 2, "source restores its cursor");
+}
+
+#[test]
+fn the_preview_choice_survives_a_refresh_and_dies_with_a_file_change() {
+    let (_repo, mut app) = markdown_app();
+    app.toggle_preview();
+    app.preview_scroll_by(2);
+
+    app.reload().unwrap();
+    assert!(app.preview_active(), "a same-file refresh keeps the preview");
+    assert_eq!(app.preview_scroll, 2, "the preview scroll survives the refresh");
+
+    app.move_cursor(1).unwrap(); // open code.rs
+    assert!(!app.preview_active(), "another file opens in source");
+    app.move_cursor(-1).unwrap(); // back to README.md
+    assert_eq!(app.diff_path.as_deref(), Some("README.md"));
+    assert!(!app.preview_active(), "reopening a file starts in source");
+}
+
+#[test]
+fn a_tab_switch_restores_the_preview_choice() {
+    use herdr_reviewr::app::Tab;
+    let (_repo, mut app) = markdown_app();
+    app.toggle_preview();
+    assert!(app.preview_active());
+
+    app.set_tab(Tab::Changes).unwrap();
+    assert!(!app.preview_active(), "Changes never previews");
+    app.set_tab(Tab::AllFiles).unwrap();
+    assert!(app.preview_active(), "the tab restores its preview choice");
+
+    app.set_tab(Tab::Pr).unwrap();
+    app.set_tab(Tab::AllFiles).unwrap();
+    assert!(app.preview_active(), "a PR round-trip also restores it");
+}
+
+#[test]
+fn the_description_row_pins_first_and_follows_refetches() {
+    use herdr_reviewr::app::Tab;
+    use herdr_reviewr::forge::{Comment, PrSnapshot, PrView};
+
+    let comment = |author: &str, created: &str| Comment {
+        author: author.into(),
+        created_at: created.into(),
+        ..common::comment()
+    };
+    let snap = |body: &str, comments: Vec<Comment>| {
+        PrView::Pr(Box::new(PrSnapshot { body: body.into(), comments, ..common::pr_snapshot() }))
+    };
+
+    let r = Repo::init();
+    r.write("x.rs", "y\n");
+    r.commit_all("init");
+    let mut app = app_on(&r);
+    app.set_tab(Tab::Pr).unwrap();
+
+    // A non-empty description pins one extra row first.
+    app.apply_pr(snap("the body", vec![comment("ann", "2026-06-27T10:00:00Z")]));
+    assert_eq!(app.pr_row_count(), 2, "description + one comment");
+    assert!(app.pr_on_description(), "the cursor starts on the pinned description");
+    assert!(app.pr_selected_comment().is_none(), "the description is not a comment");
+    app.pr_move(1);
+    assert_eq!(app.pr_selected_comment().map(|c| c.author.as_str()), Some("ann"));
+
+    // A refetch keeps the selected comment across the pinned row's offset.
+    app.apply_pr(snap(
+        "the body",
+        vec![comment("bob", "2026-06-27T11:00:00Z"), comment("ann", "2026-06-27T10:00:00Z")],
+    ));
+    assert_eq!(
+        app.pr_selected_comment().map(|c| c.author.as_str()),
+        Some("ann"),
+        "identity-following accounts for the description row"
+    );
+
+    // On the description, a refetch that keeps a description holds the selection.
+    app.pr_move(-5);
+    assert!(app.pr_on_description());
+    app.apply_pr(snap("edited body", vec![comment("ann", "2026-06-27T10:00:00Z")]));
+    assert!(app.pr_on_description(), "the description row keeps its identity");
+
+    // An emptied description vanishes like a comment: the row is gone, the cursor clamps.
+    app.apply_pr(snap("", vec![comment("ann", "2026-06-27T10:00:00Z")]));
+    assert_eq!(app.pr_row_count(), 1, "no description row without a body");
+    assert!(!app.pr_on_description());
+    assert_eq!(app.pr_selected_comment().map(|c| c.author.as_str()), Some("ann"));
+
+    // A whitespace-only body is no description either.
+    app.apply_pr(snap("  \n ", vec![comment("ann", "2026-06-27T10:00:00Z")]));
+    assert_eq!(app.pr_row_count(), 1);
+}
+
+#[test]
+fn the_toggle_carries_the_reading_position_block_aligned() {
+    use herdr_reviewr::app::Tab;
+    let doc = "# Title\n\npara one\n\n## Section two\n\npara two\n";
+    let r = Repo::init();
+    r.write("doc.md", doc);
+    r.commit_all("init");
+    let mut app = app_on(&r);
+    app.set_tab(Tab::AllFiles).unwrap();
+    assert_eq!(app.diff_path.as_deref(), Some("doc.md"));
+    app.note_diff_width(80);
+    app.focus = Focus::Diff;
+
+    // Entering opens at the block holding the cursor's line ("para two", source line 7).
+    // The expectation derives from the render contract, not a hardcoded layout index.
+    let theme = herdr_reviewr::theme::resolve(Some("catppuccin"));
+    let rendered = herdr_reviewr::markdown::render(
+        doc,
+        80,
+        &herdr_reviewr::highlight::Highlighter::new(theme.syntax),
+        &theme.palette,
+    );
+    let block_start =
+        rendered.meta.iter().position(|m| m.source_line == 7).expect("the block renders");
+    app.diff_cursor = 6;
+    app.toggle_preview();
+    assert!(app.preview_active());
+    assert_eq!(app.preview_scroll, block_start, "the preview opens at the cursor's block");
+
+    // A scrolled return maps the top visible block back to a source cursor.
+    app.preview_scroll_by(-5);
+    app.toggle_preview();
+    assert!(!app.preview_active());
+    assert_eq!(app.diff_cursor, 0, "the top block (source line 1) becomes the cursor");
+
+    // An unscrolled round-trip restores the exact position, even off a block start.
+    app.diff_cursor = 1; // the blank line under the title
+    app.toggle_preview();
+    app.toggle_preview();
+    assert_eq!(app.diff_cursor, 1, "no scroll input → exact restore");
+
+    // The predicate is the gesture, not the offset: scroll away and back still maps.
+    app.diff_cursor = 1;
+    app.toggle_preview();
+    app.preview_scroll_by(1);
+    app.preview_scroll_by(-1);
+    app.toggle_preview();
+    assert_eq!(app.diff_cursor, 0, "a scroll gesture disables the exact restore");
+}
+
+#[test]
+fn a_degraded_markdown_file_never_previews() {
+    use herdr_reviewr::app::Tab;
+    let r = Repo::init();
+    r.write("empty.md", "");
+    r.commit_all("init");
+    let mut app = app_on(&r);
+    app.set_tab(Tab::AllFiles).unwrap();
+    assert_eq!(app.diff_path.as_deref(), Some("empty.md"));
+    app.toggle_preview();
+    assert!(!app.preview_active(), "a file showing a notice or nothing never previews");
 }

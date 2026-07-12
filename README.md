@@ -16,7 +16,11 @@ What you get, in one persistent pane pointed at a git worktree:
   `path:start-end — comment`. You add context and hit enter.
 - **File viewer** — the whole worktree, not just the diff, with any file's current content
   rendered in the pane.
-- **PR view** — the branch's open pull request, read-only, without switching windows.
+- **PR view** — the branch's open pull request, read-only, without switching windows. The
+  description and every comment render as styled markdown.
+- **Markdown preview** — one key flips a `.md` file between source and a rendered view, with
+  headings, lists, tables, links, and code blocks highlighted like the diff. The toggle keeps
+  your reading position.
 - **Themes** — 18 named palettes in dark and light, one config line away. Catppuccin, Dracula,
   Nord, Gruvbox, Tokyo Night, Rosé Pine, Solarized, and more.
 
@@ -94,6 +98,7 @@ several keys at once ([Keybindings](#keybindings)).
 | `Tab` | Switch focus between the file list and the diff |
 | `→` `←` | Expand or collapse a directory or fold, or scroll the diff sideways |
 | `w` | Toggle line wrap |
+| `m` | Toggle the markdown preview of a `.md` file (All files) |
 | `]` `[` | Widen / narrow the file list |
 | `r` | Refresh now |
 | `q` | Quit |
@@ -126,13 +131,14 @@ Plus the usual caret moves: arrows, `Home` / `End`, `Ctrl+A` / `Ctrl+E`, word-ju
 
 | Key | Action |
 | --- | --- |
-| `j` `k` | Move through checks and comments |
-| `PageUp` `PageDown` | Scroll the selected comment |
+| `j` `k` | Move through the description and comments |
+| `PageUp` `PageDown` | Scroll the read pane |
 | `o` | Open the PR in your browser |
 | `r` | Refresh |
 
 herdr is mouse-native, so clicking a file, dragging to select lines, clicking a tab or the `Send`
-button, and the scroll wheel all work too.
+button, and the scroll wheel all work too. A link in rendered markdown opens in your browser on
+click (`http`/`https` only), and an anchor link (`#section`) jumps to its heading.
 
 ## The three tabs
 
@@ -141,12 +147,15 @@ button, and the scroll wheel all work too.
 - **All files** — the whole worktree tree, not only what changed. The diff pane renders any
   file's current content. Git-ignored paths show too, dimmed. A directory ignored as a whole
   (`target/`, `node_modules/`) is one collapsed row that loads its contents only when you expand
-  it. You can comment here as well.
+  it. You can comment here as well. On a `.md` file, `m` flips between the source and a rendered
+  markdown preview. The preview is read-only, so commenting stays in the source view.
 - **PR** — a read-only mirror of the branch's open pull request, read from GitHub via `gh`. It
   shows the PR's state (draft, open, merged, or closed, plus mergeability and unpushed-commit
-  sync), its checks with a pass/fail rollup, and its comments. Comments cover reviews, inline
-  findings, and plain comments, newest first, with `resolved` and `outdated` markers. `o` opens
-  the PR in the browser. The tab only reads GitHub. It never posts, resolves, re-runs, or merges.
+  sync), its checks with a pass/fail rollup, and its comments. The PR description sits at the top
+  of the list. Comments cover reviews, inline findings, and plain comments, newest first, with
+  `resolved` and `outdated` markers. The description and every comment body render as styled
+  markdown, code blocks highlighted with your theme. `o` opens the PR in the browser. The tab
+  only reads GitHub. It never posts, resolves, re-runs, or merges.
 
 ## Diff scopes
 
@@ -273,6 +282,7 @@ The action names and their defaults:
 | `scope-uncommitted` / `scope-branch` / `scope-last-turn` | `u` / `b` / `t` |
 | `tab-changes` / `tab-all-files` / `tab-pr` | `1` / `2` / `3` |
 | `wrap` | `w` |
+| `preview` | `m` |
 | `list-wider` / `list-narrower` | `]` / `[` |
 | `select` | `v` |
 | `comment` | `c` |

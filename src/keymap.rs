@@ -16,6 +16,7 @@ pub enum Action {
     TabAllFiles,
     TabPr,
     Wrap,
+    Preview,
     ListWider,
     ListNarrower,
     Select,
@@ -34,7 +35,7 @@ pub enum Action {
 
 /// Every action with its config name and default keys — the single source the default keymap,
 /// the name lookup, and the config error message are built from.
-const ACTIONS: [(Action, &str, &[char]); 23] = [
+const ACTIONS: [(Action, &str, &[char]); 24] = [
     (Action::Down, "down", &['j']),
     (Action::Up, "up", &['k']),
     (Action::ScopeUncommitted, "scope-uncommitted", &['u']),
@@ -44,6 +45,7 @@ const ACTIONS: [(Action, &str, &[char]); 23] = [
     (Action::TabAllFiles, "tab-all-files", &['2']),
     (Action::TabPr, "tab-pr", &['3']),
     (Action::Wrap, "wrap", &['w']),
+    (Action::Preview, "preview", &['m']),
     (Action::ListWider, "list-wider", &[']']),
     (Action::ListNarrower, "list-narrower", &['[']),
     (Action::Select, "select", &['v']),
@@ -171,6 +173,7 @@ mod tests {
         let keymap = Keymap::default();
         assert_eq!(keymap.action_for('c'), Some(Action::Comment));
         assert_eq!(keymap.action_for('S'), Some(Action::Send));
+        assert_eq!(keymap.action_for('m'), Some(Action::Preview));
         assert_eq!(keymap.action_for('x'), None);
         assert_eq!(keymap.hint(Action::Send), 's');
         assert_eq!(keymap.hint(Action::TabPr), '3');

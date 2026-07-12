@@ -21,10 +21,11 @@ PR #226  open  persiyanov/deep-research-benchmark → main   ⇡ 2 unpushed
 
 The snapshot:
 
-| field          | type      | meaning                                                              |
-| -------------- | --------- | --------------------------------------------------------------------- |
+| field          | type      | meaning                                                                |
+| -------------- | --------- | ---------------------------------------------------------------------- |
 | `number`       | int?      | PR number, `null` when no PR resolves                                  |
 | `title`, `url` | string    | identity                                                               |
+| `body`         | string    | the PR description as GitHub returns it, empty when none               |
 | `state`        | enum      | `open`, `merged`, or `closed`                                          |
 | `is_draft`     | bool      | draft flag                                                             |
 | `head_ref`     | string    | the PR's head branch name, which may differ from the local branch      |

@@ -51,6 +51,22 @@ const SELECTION_BG: ratatui::style::Color = ratatui::style::Color::Rgb(0x58, 0x5
 /// Catppuccin peach — the comment-editor caret block.
 const PEACH: ratatui::style::Color = ratatui::style::Color::Rgb(0xfa, 0xb3, 0x87);
 
+/// The right `100-pct`% of every frame row, for pane-scoped assertions — one home for
+/// the column math, so the two panes' cut points can't drift apart silently.
+fn right_column(out: &str, pct: usize) -> String {
+    out.lines()
+        .map(|l| l.chars().skip(l.chars().count() * pct / 100).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The first painted link region anywhere on the test frame, scanned over its grid.
+fn first_painted_link(app: &App) -> Option<std::sync::Arc<str>> {
+    (0..40u16)
+        .flat_map(|y| (0..140u16).map(move |x| (x, y)))
+        .find_map(|(x, y)| app.painted_link_at(x, y))
+}
+
 /// Open the comment composer on the first changed line of `edited_app`.
 fn composing(app: &mut App) {
     app.focus = Focus::Diff;
@@ -154,11 +170,7 @@ fn the_file_list_renders_as_a_directory_tree() {
 
     // Scan only the file-list pane (the right third) so the diff header — which does show
     // the open file's full path — doesn't confuse the assertions.
-    let files_pane: String = render(&app)
-        .lines()
-        .map(|l| l.chars().skip(l.chars().count() * 70 / 100).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let files_pane = right_column(&render(&app), 70);
     assert!(files_pane.contains("src/"), "the directory groups its files: {files_pane:?}");
     assert!(files_pane.contains("app.rs") && files_pane.contains("ui.rs"), "files by basename");
     assert!(!files_pane.contains("src/app.rs"), "a grouped file is not shown by full path");
@@ -386,7 +398,7 @@ fn the_footer_drops_to_fit_and_marks_the_clip() {
 #[test]
 fn the_pr_footer_keeps_the_open_action_when_the_state_line_is_long() {
     use herdr_reviewr::app::Tab;
-    use herdr_reviewr::forge::{Check, CheckStatus, Merge, PrSnapshot, PrState, PrView, Sync};
+    use herdr_reviewr::forge::{Check, CheckStatus, Merge, PrSnapshot, PrView, Sync};
     let r = Repo::init();
     r.write("x.rs", "y\n");
     r.commit_all("init");
@@ -395,18 +407,11 @@ fn the_pr_footer_keeps_the_open_action_when_the_state_line_is_long() {
     app.set_tab(Tab::Pr).unwrap();
     app.pr = PrView::Pr(Box::new(PrSnapshot {
         number: 226,
-        title: "t".into(),
-        url: "u".into(),
-        state: PrState::Open,
-        is_draft: false,
-        head_ref: "feature".into(),
-        head_is_fork: false,
-        base_ref: "main".into(),
         merge: Merge::Conflicting, // a long state line: conflicts · behind · failing · +more
         sync: Sync::Behind(3),
         checks: vec![Check { name: "ci".into(), status: CheckStatus::Failure }],
-        comments: vec![],
         truncated: true,
+        ..common::pr_snapshot()
     }));
     // At narrow width the state line is capped so the primary `o open ↗` is never crowded off.
     let footer = footer_line(&render_at(&app, 60));
@@ -416,7 +421,7 @@ fn the_pr_footer_keeps_the_open_action_when_the_state_line_is_long() {
 #[test]
 fn pr_header_names_the_resolved_branch_and_marks_a_fork() {
     use herdr_reviewr::app::Tab;
-    use herdr_reviewr::forge::{Merge, PrSnapshot, PrState, PrView, Sync};
+    use herdr_reviewr::forge::{PrSnapshot, PrView};
     let r = Repo::init();
     r.write("x.rs", "y\n");
     r.commit_all("init");
@@ -426,18 +431,9 @@ fn pr_header_names_the_resolved_branch_and_marks_a_fork() {
     let snap = |fork: bool| {
         PrView::Pr(Box::new(PrSnapshot {
             number: 226,
-            title: "t".into(),
-            url: "u".into(),
-            state: PrState::Open,
-            is_draft: false,
             head_ref: "persiyanov/feature".into(),
             head_is_fork: fork,
-            base_ref: "main".into(),
-            merge: Merge::Clean,
-            sync: Sync::InSync,
-            checks: vec![],
-            comments: vec![],
-            truncated: false,
+            ..common::pr_snapshot()
         }))
     };
     // The header shows the branch that resolved — it can differ from the local branch —
@@ -850,4 +846,321 @@ fn header_tab_hits_align_with_wide_hint_keys() {
             "the drawn {needle:?} label answers its own click"
         );
     }
+}
+
+#[test]
+fn the_markdown_preview_renders_styled_lines_without_a_gutter() {
+    let r = Repo::init();
+    r.write("README.md", "# Install\n\nRun `cargo test` for **all** checks.\n");
+    r.commit_all("init");
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+    app.set_tab(Tab::AllFiles).unwrap();
+
+    // Source view: raw markdown, and the footer surfaces the way into the preview.
+    app.focus = Focus::Diff;
+    let source = render(&app);
+    assert!(source.contains("# Install"), "source shows raw markdown:\n{source}");
+    let footer = source.lines().last().unwrap();
+    assert!(footer.contains("m preview"), "source discovers the preview:\n{footer}");
+
+    app.toggle_preview();
+    let out = render(&app);
+    assert!(out.contains("Install"), "the heading text renders:\n{out}");
+    assert!(!out.contains("# Install"), "the # markers are gone in the preview:\n{out}");
+    assert!(!out.contains("**all**"), "emphasis markers are consumed:\n{out}");
+    assert!(!out.contains("  1 "), "the preview has no line-number gutter:\n{out}");
+    let footer = out.lines().last().unwrap();
+    assert!(footer.contains("m source"), "the footer leads back to source:\n{footer}");
+    assert!(!footer.contains("c comment"), "no comment key in the preview:\n{footer}");
+}
+
+#[test]
+fn pr_bodies_render_as_markdown_and_the_description_row_pins_first() {
+    use herdr_reviewr::forge::{Comment, CommentKind, PrSnapshot, PrView};
+    let r = Repo::init();
+    r.write("x.rs", "y\n");
+    r.commit_all("init");
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+    app.set_tab(Tab::Pr).unwrap();
+    let finding = Comment {
+        kind: CommentKind::Finding,
+        author: "codex".into(),
+        author_is_bot: true,
+        anchor: "x.rs:1".into(),
+        body: "Avoid **panics** in `parse`.".into(),
+        snippet: Some("-    old\n+    new".into()),
+        ..common::comment()
+    };
+    app.pr = PrView::Pr(Box::new(PrSnapshot {
+        number: 226,
+        body: "## Summary\nThis PR adds *markdown*.".into(),
+        comments: vec![finding],
+        ..common::pr_snapshot()
+    }));
+
+    // The cursor starts on the pinned description row; its body renders as markdown.
+    let out = render(&app);
+    assert!(out.contains("description"), "the description row shows:\n{out}");
+    assert!(out.contains("Summary"), "the description heading renders:\n{out}");
+    assert!(!out.contains("## Summary"), "markers are consumed:\n{out}");
+    assert!(!out.contains("*markdown*"), "emphasis markers are consumed:\n{out}");
+
+    // The navigator orders the PR itself first: description above checks above comments.
+    let nav = right_column(&out, 68);
+    let desc_at = nav.find("description").expect("description row in the nav");
+    let checks_at = nav.find("checks").expect("checks section in the nav");
+    let comments_at = nav.find("comments ·").expect("comments header in the nav");
+    assert!(desc_at < checks_at && checks_at < comments_at, "nav order:\n{nav}");
+
+    // The finding: the snippet stays plain +/− lines, the body renders as markdown.
+    app.pr_move(1);
+    let out = render(&app);
+    assert!(out.contains("+    new"), "the diff hunk stays plain:\n{out}");
+    assert!(out.contains("Avoid panics in parse."), "the body renders styled:\n{out}");
+    assert!(!out.contains("**panics**"), "markers are consumed:\n{out}");
+}
+
+#[test]
+fn pr_nav_clicks_map_the_description_and_comment_rows() {
+    use herdr_reviewr::forge::{Check, CheckStatus, Comment, PrSnapshot, PrView};
+    let r = Repo::init();
+    r.write("x.rs", "y\n");
+    r.commit_all("init");
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+    app.set_tab(Tab::Pr).unwrap();
+    let comment = |author: &str| Comment { author: author.into(), ..common::comment() };
+    app.pr = PrView::Pr(Box::new(PrSnapshot {
+        body: "the description".into(),
+        checks: vec![Check { name: "ci".into(), status: CheckStatus::Success }],
+        comments: vec![comment("ann"), comment("bob")],
+        ..common::pr_snapshot()
+    }));
+
+    // Nav layout: description, blank, checks header, 1 check, blank, comments header,
+    // then the comments. The nav inner starts one row under the tab bar's border.
+    let area = Rect::new(0, 0, 140, 40);
+    let x = 130; // inside the nav pane
+    assert_eq!(ui::pr_nav_hit(area, &app, x, 2), Some(0), "click on the description row");
+    assert_eq!(ui::pr_nav_hit(area, &app, x, 5), None, "a check row is not a cursor stop");
+    assert_eq!(ui::pr_nav_hit(area, &app, x, 8), Some(1), "first comment maps past the offset");
+    assert_eq!(ui::pr_nav_hit(area, &app, x, 9), Some(2), "second comment follows");
+    assert_eq!(ui::pr_nav_hit(area, &app, x, 10), None, "past the last comment is dead");
+}
+
+#[test]
+fn the_refetch_indicator_lives_in_the_title_not_the_content() {
+    use herdr_reviewr::forge::{PrSnapshot, PrView};
+    let r = Repo::init();
+    r.write("x.rs", "y\n");
+    r.commit_all("init");
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+    app.set_tab(Tab::Pr).unwrap();
+    app.pr =
+        PrView::Pr(Box::new(PrSnapshot { body: "steady content".into(), ..common::pr_snapshot() }));
+
+    let steady = render(&app);
+    let row_of = |out: &str, needle: &str| {
+        out.lines().position(|l| l.contains(needle)).unwrap_or(usize::MAX)
+    };
+    let before = row_of(&steady, "steady content");
+
+    app.set_pr_refreshing(true);
+    let refreshing = render(&app);
+    assert!(refreshing.contains("refreshing…"), "the indicator shows:\n{refreshing}");
+    assert_eq!(
+        row_of(&refreshing, "steady content"),
+        before,
+        "a refetch never shifts the content the reader is on"
+    );
+}
+
+#[test]
+fn markdown_links_paint_click_regions_and_the_guard_gates_them() {
+    use herdr_reviewr::forge::{PrSnapshot, PrView};
+    let r = Repo::init();
+    r.write("x.rs", "y\n");
+    r.commit_all("init");
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+    app.set_tab(Tab::Pr).unwrap();
+    app.pr = PrView::Pr(Box::new(PrSnapshot {
+        body: "see [the run](https://ci.example/1)".into(),
+        ..common::pr_snapshot()
+    }));
+
+    let _ = render(&app);
+    let hit = first_painted_link(&app);
+    assert_eq!(hit.as_deref(), Some("https://ci.example/1"), "a painted region resolves");
+
+    // The guard gates what a click can open; a refused destination is silently inert.
+    app.status.clear();
+    app.open_link("javascript:alert(1)");
+    assert_eq!(app.status, "", "an unsupported scheme does nothing");
+    app.open_link("https://a\u{202e}b");
+    assert_eq!(app.status, "", "a bidi-carrying destination does nothing");
+    app.open_link("#no-such-anchor");
+    assert_eq!(app.status, "", "a missing anchor does nothing");
+}
+
+#[test]
+fn an_anchor_click_scrolls_the_preview_to_its_heading() {
+    let mut md = String::from(
+        "# Top
+
+jump [go](#section-two)
+
+",
+    );
+    for i in 0..40 {
+        use std::fmt::Write as _;
+        let _ = write!(md, "filler paragraph {i}\n\n");
+    }
+    md.push_str(
+        "## Section Two
+
+the target body
+",
+    );
+    let r = Repo::init();
+    r.write("doc.md", &md);
+    r.commit_all("init");
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+    app.set_tab(Tab::AllFiles).unwrap();
+
+    // In source view an anchor click is inert: no anchors are painted there.
+    let _ = render(&app);
+    app.open_link("#section-two");
+    assert_eq!(app.preview_scroll, 0, "source view ignores anchor destinations");
+
+    app.toggle_preview();
+    let _ = render(&app); // paint: anchors and link regions note themselves
+
+    assert_eq!(app.preview_scroll, 0);
+    app.open_link("#section-two");
+    assert!(app.preview_scroll > 40, "the preview jumped to the heading: {}", app.preview_scroll);
+    let out = render(&app);
+    assert!(
+        out.contains("Section Two"),
+        "the heading is on screen:
+{out}"
+    );
+    assert!(
+        !out.contains("# Top"),
+        "the top scrolled away:
+{out}"
+    );
+    assert!(out.contains('┃'), "an overflowing preview shows the scrollbar thumb:\n{out}");
+}
+
+#[test]
+fn a_body_that_fits_the_pane_shows_no_scrollbar() {
+    use herdr_reviewr::forge::{PrSnapshot, PrView};
+    use std::fmt::Write as _;
+    let r = Repo::init();
+    r.write("x.rs", "y\n");
+    r.commit_all("init");
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+    app.set_tab(Tab::Pr).unwrap();
+    app.pr =
+        PrView::Pr(Box::new(PrSnapshot { body: "one short line".into(), ..common::pr_snapshot() }));
+    let out = render(&app);
+    assert!(!out.contains('┃'), "content that fits paints no thumb:\n{out}");
+
+    // The same pane paints the thumb once its body overflows, so the absence above
+    // proves fitting content, not a dead scrollbar.
+    let mut long = String::new();
+    for i in 0..80 {
+        let _ = writeln!(long, "line {i}\n");
+    }
+    app.pr = PrView::Pr(Box::new(PrSnapshot { body: long, ..common::pr_snapshot() }));
+    let out = render(&app);
+    assert!(out.contains('┃'), "an overflowing PR body shows the thumb:\n{out}");
+}
+
+#[test]
+fn the_preview_paints_link_regions_and_names_itself_in_the_title() {
+    let r = Repo::init();
+    r.write("README.md", "# Install\n\nsee [docs](https://docs.example/x)\n");
+    r.commit_all("init");
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+    app.set_tab(Tab::AllFiles).unwrap();
+
+    let source = render(&app);
+    assert!(!source.contains("· preview"), "source view has no preview marker");
+    let miss = first_painted_link(&app);
+    assert_eq!(miss, None, "raw source paints no link regions");
+
+    app.toggle_preview();
+    let out = render(&app);
+    assert!(out.contains("README.md · preview"), "the title names the mode:\n{out}");
+    let hit = first_painted_link(&app);
+    assert_eq!(hit.as_deref(), Some("https://docs.example/x"));
+}
+
+#[test]
+fn an_uppercase_unicode_anchor_still_finds_its_heading() {
+    use std::fmt::Write as _;
+    let mut md = String::from("# Über Top\n\njump [go](#ÜBER-TOP)\n\n");
+    for i in 0..40 {
+        let _ = writeln!(md, "filler {i}\n");
+    }
+    md.push_str("## Über Ziel\n\nend\n");
+    let r = Repo::init();
+    r.write("doc.md", &md);
+    r.commit_all("init");
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+    app.set_tab(Tab::AllFiles).unwrap();
+    app.toggle_preview();
+    let _ = render(&app);
+
+    // The click side must Unicode-lowercase like the slugger: #ÜBER-ZIEL → über-ziel.
+    app.open_link("#ÜBER-ZIEL");
+    assert!(app.preview_scroll > 40, "the jump matched the slug: {}", app.preview_scroll);
+}
+
+#[test]
+fn an_anchor_in_a_comment_body_jumps_past_the_snippet_offset() {
+    use herdr_reviewr::forge::{Comment, CommentKind, PrSnapshot, PrView};
+    use std::fmt::Write as _;
+    let mut body = String::from("jump [go](#target)\n\n");
+    for i in 0..60 {
+        let _ = writeln!(body, "line {i}\n");
+    }
+    body.push_str("## Target\n\nTARGET-BODY\n");
+    let r = Repo::init();
+    r.write("x.rs", "y\n");
+    r.commit_all("init");
+    let mut app = App::new(r.path_buf(), Scope::Uncommitted, None);
+    app.reload().unwrap();
+    app.set_tab(Tab::Pr).unwrap();
+    app.pr = PrView::Pr(Box::new(PrSnapshot {
+        comments: vec![Comment {
+            kind: CommentKind::Finding,
+            author: "codex".into(),
+            author_is_bot: true,
+            anchor: "x.rs:1".into(),
+            body,
+            snippet: Some("-    old\n+    new".into()),
+            ..common::comment()
+        }],
+        ..common::pr_snapshot()
+    }));
+    let out = render(&app);
+    assert!(out.contains("+    new"), "the snippet paints above the body:\n{out}");
+
+    // The anchor stores its content line snippet-offset included, so the jump lands on
+    // the heading, scrolling the snippet and the body's top out of view.
+    app.open_link("#target");
+    let out = render(&app);
+    assert!(out.contains("Target"), "the heading is on screen:\n{out}");
+    assert!(!out.contains("+    new"), "the snippet scrolled away:\n{out}");
+    assert!(!out.contains("jump go"), "the body's top scrolled away:\n{out}");
 }

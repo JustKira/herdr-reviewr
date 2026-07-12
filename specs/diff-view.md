@@ -1,7 +1,7 @@
 ---
 Status: Current
 Created: 2026-06-24
-Last edited: 2026-07-09
+Last edited: 2026-07-12
 ---
 
 # Diff view
@@ -78,6 +78,26 @@ Content rows are selectable for comments. A `fold` is not.
 - Highlighting, wrapping, horizontal scroll, selection, and comments behave exactly as in Diff view.
 - A `binary` or `too_large` file degrades to a notice, worded `file too large` here and `file too large to diff` in Diff view.
 
+A markdown file adds a rendered preview:
+
+- The `preview` binding (default `m`) switches between source and rendered markdown (`markdown.md`).
+- A markdown file has a `.md` or `.markdown` extension, case-insensitive. A file that stops qualifying shows source.
+- The pane title carries a `· preview` suffix while the preview is open.
+- The preview choice holds across refreshes of the same file. Opening a file starts in source.
+- The preview is read-only: selection and commenting are inactive, comment cards do not show, and there is no cursor.
+- Entering the preview clears a live selection.
+- `down`/`up`, the page keys, and the wheel scroll the preview by line, with no gutter. The scroll stops with the last line at the pane's bottom edge. A refresh keeps the preview's scroll, clamped the same way.
+- A preview taller than the pane shows a scrollbar on the pane's right border. One that fits shows none.
+- The `wrap` binding and horizontal scroll are inert in the preview.
+
+The toggle carries the reading position, block-aligned, resolved against the painted render:
+
+- Entering the preview opens at the block holding the source cursor's line, or the nearest block above it.
+- Returning to source puts the cursor on the top visible block's first source line, revealed.
+- A round-trip with no preview scroll input restores the exact source cursor and scroll. A refresh clamp is not a scroll input.
+- The horizontal offset always keeps its pre-entry value.
+- A forced return — the file stops qualifying — keeps the prior source position.
+
 ### Color
 
 - The active theme (`theme.md`) supplies every color: syntax token foregrounds and the structural fills.
@@ -134,3 +154,4 @@ The viewer is read-only and recomputed on every refresh. It degrades rather than
 - [review-model](./review-model.md)
 - [tui](./tui.md)
 - [theme](./theme.md)
+- [markdown](./markdown.md)

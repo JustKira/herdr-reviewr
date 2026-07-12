@@ -21,6 +21,7 @@ pub mod highlight;
 pub mod keymap;
 #[macro_use]
 pub mod log;
+pub mod markdown;
 pub mod model;
 pub mod proc;
 pub mod theme;
@@ -890,6 +891,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent, area: Rect, keymap: &Keymap) -> 
             K::Down => app.move_cursor(1)?,
             K::Up => app.move_cursor(-1)?,
             K::Wrap => app.toggle_wrap(),
+            K::Preview => app.toggle_preview(),
             // `list-wider` widens the file list, `list-narrower` narrows it (widening the diff).
             K::ListWider => app.resize_list(4),
             K::ListNarrower => app.resize_list(-4),
@@ -959,7 +961,10 @@ fn handle_mouse(
     if app.tab == crate::app::Tab::Pr {
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(ui::HeaderHit::Tab(tab)) =
+                if let Some(url) = app.painted_link_at(m.column, m.row) {
+                    // A link click resolves against the painted frame (specs/markdown.md).
+                    app.open_link(&url);
+                } else if let Some(ui::HeaderHit::Tab(tab)) =
                     ui::hit_header(area, app, keymap, m.column, m.row)
                 {
                     app.set_tab(tab)?;
@@ -1003,6 +1008,16 @@ fn handle_mouse(
                 app.file_scroll,
             ) {
                 app.select_file(i)?;
+            } else if let Some(url) = app.painted_link_at(m.column, m.row) {
+                // A link click resolves against the painted frame (specs/markdown.md).
+                app.open_link(&url);
+            } else if app.preview_active() {
+                // The preview has no cursor or selection: a click in the pane only
+                // focuses it. The pane-rect test, not the source-row hit test — the
+                // rendered preview can be taller than the source has rows.
+                if ui::in_diff_pane(area, app.list_pct, m.column, m.row) {
+                    app.focus = Focus::Diff;
+                }
             } else if let Some(i) =
                 ui::hit_diff(area, app.list_pct, m.column, m.row, heights, app.diff_scroll)
             {
@@ -1017,6 +1032,8 @@ fn handle_mouse(
             if app.resizing {
                 let body = ui::body_rect(area);
                 app.drag_divider(body.width, m.column.saturating_sub(body.x));
+            } else if app.preview_active() {
+                // No drag-selection in the read-only preview.
             } else if let Some(i) =
                 ui::hit_diff(area, app.list_pct, m.column, m.row, heights, app.diff_scroll)
             {

@@ -12,7 +12,10 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{
+    Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
+    ScrollbarState,
+};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, Focus, FooterAction, Mode, Tab, Tier};
@@ -25,6 +28,8 @@ use crate::theme::Palette;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
+    // Link hit-testing resolves against the painted frame; each frame repaints its own.
+    app.clear_painted_links();
     if let Some(error) = app.config_error() {
         frame.render_widget(
             Paragraph::new(error).wrap(ratatui::widgets::Wrap { trim: false }),
@@ -125,6 +130,13 @@ pub fn file_viewport_height(area: Rect, list_pct: u16) -> usize {
 #[must_use]
 pub fn in_files_pane(area: Rect, list_pct: u16, col: u16, row: u16) -> bool {
     contains(panes(area, list_pct).files, col, row)
+}
+
+/// Whether `(col, row)` falls in the diff pane — the markdown preview's click target,
+/// whose rendered geometry the source-row hit test cannot describe.
+#[must_use]
+pub fn in_diff_pane(area: Rect, list_pct: u16, col: u16, row: u16) -> bool {
+    contains(panes(area, list_pct).diff, col, row)
 }
 
 /// The logical diff-row index a click at `(col, row)` lands on, or `None` if outside the
@@ -712,7 +724,7 @@ fn truncate_width(s: &str, max: usize) -> String {
 
 fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
     let p = app.palette();
-    let title = match (&app.diff_path, &app.diff.previous_path) {
+    let mut title = match (&app.diff_path, &app.diff.previous_path) {
         (Some(new), Some(old)) => format!("{old} → {new}"),
         (Some(new), None) => new.clone(),
         (None, _) => match app.tab {
@@ -721,9 +733,13 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
         }
         .to_string(),
     };
+    if app.preview_active() {
+        title.push_str(" · preview");
+    }
     let block = bordered(&title, app.focus == Focus::Diff, p);
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    app.note_diff_width(inner.width as usize);
 
     if app.visible.is_empty() {
         // `All files` is a content browser, not a diff, so its empty/notice copy avoids diff
@@ -751,6 +767,26 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
     let width = inner.width as usize;
+
+    // The markdown preview: rendered lines, no gutter, no cursor; the scroll clamps to
+    // the rendered length so a refresh that shrank the file keeps the reader in range
+    // (specs/diff-view.md).
+    if app.preview_active() {
+        let rendered = app.markdown_render(app.preview_text(), width.max(1));
+        // Scrolling stops with the last line at the pane's bottom edge; content that
+        // fits the pane does not scroll.
+        let max = rendered.lines.len().saturating_sub(height);
+        app.note_preview_max_scroll(max);
+        let scroll = app.preview_scroll.min(max);
+        note_markdown_regions(app, &rendered, inner, scroll, 0);
+        frame.render_widget(
+            Paragraph::new(rendered.lines).scroll((saturating_row(scroll), 0)),
+            inner,
+        );
+        render_overflow_scrollbar(frame, area, max, scroll, p);
+        return;
+    }
+
     let gutter_w = gutter_for(&app.diff);
     let layout = RowLayout {
         gutter_w,
@@ -970,7 +1006,7 @@ fn render_row(row: &Row, layout: RowLayout<'_>, state: RowState) -> Vec<Line<'st
         .collect()
 }
 
-fn rgb(c: crate::diff::Rgb) -> Color {
+pub(crate) fn rgb(c: crate::diff::Rgb) -> Color {
     Color::Rgb(c.0, c.1, c.2)
 }
 
@@ -1133,6 +1169,7 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
         A::TogglePane => {
             return ("⇥".into(), if app.focus == Focus::Files { "diff" } else { "files" }.into());
         }
+        A::Preview => (hint(K::Preview), if app.preview_active() { "source" } else { "preview" }),
         A::Scope => (
             format!(
                 "{}/{}/{}",
@@ -1463,9 +1500,16 @@ fn render_pr_nav(frame: &mut Frame, app: &App, area: Rect) {
     let dim = Style::default().fg(p.overlay0);
     let now = std::time::SystemTime::now();
 
-    // (row spans, is the navigator cursor on this row). Only comment rows are selectable; the
-    // checks section is a status display.
+    // (row spans, is the navigator cursor on this row). The description row and the
+    // comment rows are the cursor stops; the checks section is a status display.
     let mut rows: Vec<(Vec<Span<'static>>, bool)> = Vec::new();
+    // A non-empty PR description pins a `description` row at the top of the navigator,
+    // above the checks — the PR itself, before its status and discussion (specs/tui.md).
+    let offset = app.pr_description_offset();
+    if app.pr_has_description() {
+        rows.push((vec![Span::styled("description", text_style(p))], app.pr_cursor == 0));
+        rows.push((Vec::new(), false));
+    }
     rows.push((vec![Span::styled(pr_checks_header(s), dim)], false));
     for c in &s.checks {
         let (glyph, color) = check_glyph(p, c.status);
@@ -1480,7 +1524,7 @@ fn render_pr_nav(frame: &mut Frame, app: &App, area: Rect) {
     rows.push((Vec::new(), false));
     rows.push((vec![Span::styled(format!("comments · {}", s.comments.len()), dim)], false));
     for (j, cm) in s.comments.iter().enumerate() {
-        rows.push((pr_comment_row(cm, width, now, p), app.pr_cursor == j));
+        rows.push((pr_comment_row(cm, width, now, p), app.pr_cursor == j + offset));
     }
 
     let viewport = inner.height as usize;
@@ -1530,15 +1574,89 @@ fn pr_comment_row(
     ]
 }
 
+/// Note the painted link regions and heading anchors for a markdown render drawn
+/// inside `inner`, scrolled by `scroll`, with the body's first line at display index
+/// `offset` — so a click can resolve against exactly what this frame painted
+/// (`specs/markdown.md`). Links note only the visible rows; anchors cover the whole
+/// body, since an anchor click can jump past the viewport.
+fn note_markdown_regions(
+    app: &App,
+    rendered: &crate::markdown::Rendered,
+    inner: Rect,
+    scroll: usize,
+    offset: usize,
+) {
+    for (slug, line) in &rendered.anchors {
+        app.note_painted_anchor(slug.clone(), line + offset);
+    }
+    let viewport = inner.height as usize;
+    let visible = rendered.meta.iter().enumerate().filter_map(|(i, m)| {
+        match (i + offset).checked_sub(scroll) {
+            Some(d) if d < viewport => Some((d, m)),
+            _ => None,
+        }
+    });
+    for (display, m) in visible {
+        for link in &m.links {
+            let x1 = inner.x + link.start.min(inner.width as usize) as u16;
+            let x2 = inner.x + link.end.min(inner.width as usize) as u16;
+            if x1 < x2 {
+                app.note_painted_link(x1, x2, inner.y + display as u16, link.url.clone());
+            }
+        }
+    }
+}
+
+/// A ratatui scroll row from a usize offset, saturating — a render past 65k lines must
+/// pin to the end, never wrap back near the top.
+fn saturating_row(scroll: usize) -> u16 {
+    u16::try_from(scroll).unwrap_or(u16::MAX)
+}
+
+/// A scrollbar over `area`'s right border when the content overflows the pane —
+/// rendered markdown has no line numbers, so this is its position feedback
+/// (`specs/diff-view.md`, `specs/tui.md`). `max` is the maximum useful scroll; zero
+/// (content fits) paints nothing.
+fn render_overflow_scrollbar(
+    frame: &mut Frame,
+    area: Rect,
+    max: usize,
+    scroll: usize,
+    p: &Palette,
+) {
+    if max == 0 {
+        return;
+    }
+    let mut state = ScrollbarState::new(max).position(scroll);
+    // A heavy-line accent thumb on the untouched border: the border thickens where the
+    // reader is, and no track paints over it.
+    frame.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_symbol(None)
+            .thumb_symbol("┃")
+            .thumb_style(Style::default().fg(p.lavender)),
+        area.inner(ratatui::layout::Margin { vertical: 1, horizontal: 0 }),
+        &mut state,
+    );
+}
+
 /// The left read pane: the selected comment's hunk (for a finding) then its body, a check's
 /// open hint, or the loading/degraded message.
 fn render_pr_read(frame: &mut Frame, app: &App, area: Rect) {
     let p = app.palette();
     let selected = app.pr_selected_comment();
-    let title = match selected {
+    let mut title = match selected {
         Some(cm) => format!("@{} · {}", cm.author, cm.anchor),
+        None if app.pr_on_description() => "description".to_string(),
         None => "PR".to_string(),
     };
+    // The refetch indicator lives in the title, never in the content flow — a poll must
+    // not shift what the reader is reading (policies/ux-responsiveness.md).
+    if app.pr_refreshing() {
+        title.push_str(" · refreshing…");
+    }
     let block = bordered(&title, false, p);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -1548,12 +1666,13 @@ fn render_pr_read(frame: &mut Frame, app: &App, area: Rect) {
     if let Some(notice) = app.pr_notice() {
         lines.push(Line::from(Span::styled(notice.to_owned(), Style::default().fg(p.yellow))));
         lines.push(Line::raw(""));
-    } else if app.pr_refreshing() {
-        lines.push(Line::from(Span::styled("refreshing…", Style::default().fg(p.overlay0))));
-        lines.push(Line::raw(""));
     }
 
+    // The markdown body's render metadata and its first display row, for hit-testing.
+    let mut body_meta: Option<(usize, crate::markdown::Rendered)> = None;
     if let Some(cm) = selected {
+        // The finding's diff hunk stays plain `+`/`−`-colored lines; only the prose body
+        // renders as markdown (specs/tui.md).
         if let Some(hunk) = &cm.snippet {
             for raw in hunk.lines() {
                 let color = match raw.bytes().next() {
@@ -1565,11 +1684,10 @@ fn render_pr_read(frame: &mut Frame, app: &App, area: Rect) {
             }
             lines.push(Line::raw(""));
         }
-        for logical in cm.body.split('\n') {
-            for piece in wrap_text(logical, width.max(1)) {
-                lines.push(Line::from(Span::styled(piece, text_style(p))));
-            }
-        }
+        let mut rendered = app.markdown_render(&cm.body, width.max(1));
+        let offset = lines.len();
+        lines.append(&mut rendered.lines);
+        body_meta = Some((offset, rendered));
         if cm.reply_count > 0 {
             let plural = if cm.reply_count == 1 { "reply" } else { "replies" };
             lines.push(Line::raw(""));
@@ -1578,18 +1696,31 @@ fn render_pr_read(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(p.overlay0),
             )));
         }
+    } else if app.pr_on_description() {
+        if let Some(s) = app.pr_snapshot() {
+            let mut rendered = app.markdown_render(&s.body, width.max(1));
+            let offset = lines.len();
+            lines.append(&mut rendered.lines);
+            body_meta = Some((offset, rendered));
+        }
     } else {
+        // The empty-state remedy can outgrow a narrow pane; wrap it rather than clip it.
         let refresh = app.keymap().hint(crate::keymap::Action::Refresh);
-        lines.push(Line::from(Span::styled(
-            pr_empty_msg(&app.pr, refresh),
-            Style::default().fg(p.overlay0),
-        )));
+        for piece in wrap_text(&pr_empty_msg(&app.pr, refresh), width.max(1)) {
+            lines.push(Line::from(Span::styled(piece, Style::default().fg(p.overlay0))));
+        }
     }
 
-    // Clamp in `usize` before the `u16` cast — `pr_read_scroll` grows unbounded via the wheel,
-    // so casting first could wrap a large value below the clamp.
-    let scroll = app.pr_read_scroll.min(lines.len().saturating_sub(1)) as u16;
-    frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), inner);
+    // Clamp in `usize` before the `u16` cast — a stale `pr_read_scroll` could otherwise
+    // wrap below the clamp. Scrolling stops with the last line at the pane's bottom edge.
+    let max = lines.len().saturating_sub(inner.height as usize);
+    app.note_pr_read_max_scroll(max);
+    let scroll = app.pr_read_scroll.min(max);
+    if let Some((offset, rendered)) = &body_meta {
+        note_markdown_regions(app, rendered, inner, scroll, *offset);
+    }
+    frame.render_widget(Paragraph::new(lines).scroll((saturating_row(scroll), 0)), inner);
+    render_overflow_scrollbar(frame, area, max, scroll, p);
 }
 
 /// The one-line message for a loading or degraded PR view, each naming what unblocks it.
@@ -1652,8 +1783,9 @@ pub fn hit_pr_open(area: Rect, app: &App, col: u16, row: u16) -> bool {
     col >= area.width.saturating_sub(chip_w) && col < area.width
 }
 
-/// The comment index a click at `(col, row)` lands on, or `None` (a check, header, or blank).
-/// Mirrors `render_pr_nav`'s row layout and cursor-windowed scroll; only comments are selectable.
+/// The cursor-row index a click at `(col, row)` lands on — the pinned description at the
+/// top, or a comment — or `None` (a check, header, or blank). Mirrors `render_pr_nav`'s
+/// row layout and cursor-windowed scroll.
 #[must_use]
 pub fn pr_nav_hit(area: Rect, app: &App, col: u16, row: u16) -> Option<usize> {
     let inner = inner_rect(panes(area, app.list_pct).files);
@@ -1661,21 +1793,28 @@ pub fn pr_nav_hit(area: Rect, app: &App, col: u16, row: u16) -> Option<usize> {
         return None;
     }
     let s = app.pr_snapshot()?;
-    // The first comment's display row, mirroring `render_pr_nav`'s layout; the view windows on
-    // the selected comment exactly as the painter does.
-    let first = pr_nav_comment_offset(s);
-    let sel_display = first + app.pr_cursor;
+    let has_desc = app.pr_has_description();
+    let offset = app.pr_description_offset();
+    let first = pr_nav_first_comment_row(s, has_desc);
+    // The display row of the selected cursor row; the view windows on it exactly as the
+    // painter does.
+    let sel_display =
+        if has_desc && app.pr_cursor == 0 { 0 } else { first + app.pr_cursor - offset };
     let viewport = inner.height as usize;
     let scroll = sel_display.saturating_sub(viewport.saturating_sub(1));
     let d = (row - inner.y) as usize + scroll;
-    (d >= first && d - first < s.comments.len()).then(|| d - first)
+    if has_desc && d == 0 {
+        return Some(0);
+    }
+    (d >= first && d - first < s.comments.len()).then(|| d - first + offset)
 }
 
-/// The display row of the first comment in `render_pr_nav`'s navigator — past the checks header,
-/// the checks themselves, a blank, and the comments header. The single home for that layout
-/// offset, shared with the click hit-test so the painted rows and the hit math can't drift.
-fn pr_nav_comment_offset(s: &forge::PrSnapshot) -> usize {
-    s.checks.len() + 3
+/// The display row of the first comment in `render_pr_nav`'s navigator — past the pinned
+/// description (when present), the checks header, the checks, a blank, and the comments
+/// header. The single home for that layout offset, shared with the click hit-test so the
+/// painted rows and the hit math can't drift.
+fn pr_nav_first_comment_row(s: &forge::PrSnapshot, has_desc: bool) -> usize {
+    usize::from(has_desc) * 2 + s.checks.len() + 3
 }
 
 /// The status glyph and Catppuccin accent for a check.
