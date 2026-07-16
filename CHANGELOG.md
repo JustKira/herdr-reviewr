@@ -6,12 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-07-16
+
 ### Changed
 - **Copy and onboarding are clearer.** Export confirmations now distinguish adding comments to the
   agent input from copying them, PR failures pair the problem with a concrete recovery step, and
   config errors explain that a corrected file reloads automatically. The README now shows how to
   open reviewr immediately after installation, gives the last-turn diff its own feature callout,
   and demonstrates the full comment-to-agent handoff.
+- **The demo shows reviewr itself.** The README recording now runs the installed plugin full-screen
+  with its real terminal palette instead of simulating an adjacent agent pane.
 
 ## [0.18.0] — 2026-07-15
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build a throwaway repo for the demo recording (assets/demo.tape): a committed baseline plus an
 # uncommitted edit + a new file, so the Changes tab has a clear diff to review. It also writes a
-# tiny `herdr` stand-in that adds exported comments to the demo's adjacent agent input. Kept
-# out of the tape itself because vhs's lexer can't carry the quoting.
+# tiny `herdr` stand-in so the send flow can complete. Kept out of the tape itself because vhs's
+# lexer can't carry the quoting.
 set -euo pipefail
 
 D="${1:-/tmp/herdr-reviewr-demo}"
@@ -54,12 +54,8 @@ case "${1:-} ${2:-}" in
   "agent list")
     printf '%s\n' '{"result":{"agents":[{"agent":"codex","agent_status":"idle","pane_id":"demo:p1","tab_id":"demo:t1","workspace_id":"demo"}]}}'
     ;;
-  "agent send")
-    TOOLS="$(cd "$(dirname "$0")" && pwd)"
-    printf '%s' "$4" > "$TOOLS/pending-input"
-    ;;
-  "agent focus")
-    tmux select-pane -t reviewr-demo:0.0
+  "agent send" | "agent focus")
+    :
     ;;
   *)
     printf 'unsupported demo command: %s\n' "$*" >&2
@@ -69,22 +65,6 @@ esac
 EOF
 chmod +x "$TOOLS/mock-herdr"
 
-cat > "$TOOLS/agent-pane" <<'EOF'
-#!/usr/bin/env bash
-printf '\033c\033[1;36mcodex\033[0m\n\nReview feedback lands here.\n\n'
-TOOLS="$(cd "$(dirname "$0")" && pwd)"
-while [[ ! -f "$TOOLS/pending-input" ]]; do
-  sleep 0.1
-done
-printf '\033c\033[1;36mcodex\033[0m\n\nPending input — edit, then press Enter to submit.\n\n'
-cat "$TOOLS/pending-input"
-printf '█'
-while :; do
-  sleep 1
-done
-EOF
-chmod +x "$TOOLS/agent-pane"
-
 cat > "$TOOLS/demo-session" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -92,24 +72,13 @@ set -euo pipefail
 BIN="$1"
 TOOLS="$(cd "$(dirname "$0")" && pwd)"
 D="$(cd "$TOOLS/../.." && pwd)"
-SOCKET="reviewr-demo"
 
-# Keep the recording isolated from the user's tmux server, opt out of any inherited NO_COLOR
-# setting, and tell the private server that VHS's outer terminal supports RGB. Otherwise the demo
-# loses the same syntax colors and diff fills that appear in a real terminal.
-unset TMUX NO_COLOR
-cleanup() {
-  tmux -L "$SOCKET" kill-server 2>/dev/null || true
-}
-trap cleanup EXIT
-cleanup
-tmux -L "$SOCKET" new-session -d -s reviewr-demo "$TOOLS/agent-pane"
-tmux -L "$SOCKET" set-option -g default-terminal tmux-256color
-tmux -L "$SOCKET" set-option -as terminal-features ",${TERM}:RGB"
-tmux -L "$SOCKET" split-window -h -p 62 -t reviewr-demo:0 \
-  "cd '$D' && HERDR_BIN_PATH='$TOOLS/mock-herdr' HERDR_TAB_ID=demo:t1 HERDR_WORKSPACE_ID=demo HERDR_PANE_ID=demo:p2 '$BIN'"
-tmux -L "$SOCKET" set-option -t reviewr-demo status off
-tmux -L "$SOCKET" select-pane -t reviewr-demo:0.1
-tmux -L "$SOCKET" -T RGB attach-session -t reviewr-demo
+# The recorder should show reviewr's real palette even when its parent shell opts out of color.
+unset NO_COLOR
+cd "$D"
+exec env \
+  HERDR_BIN_PATH="$TOOLS/mock-herdr" \
+  HERDR_TAB_ID=demo:t1 \
+  "$BIN"
 EOF
 chmod +x "$TOOLS/demo-session"

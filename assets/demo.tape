@@ -1,7 +1,11 @@
 # Demo recording for herdr-reviewr. Regenerate with:
-#   cargo build --release && vhs assets/demo.tape
-# Self-contained: builds a throwaway git repo with an agent-style change, then drives the release
-# binary beside a small fake agent pane through the review loop. Needs `git`, `tmux`, and `vhs`.
+#   herdr plugin install persiyanov/herdr-reviewr --yes && vhs assets/demo.tape
+# Builds a throwaway git repo with an agent-style change, then drives the installed release through
+# the review loop. Needs `git`, `herdr`, `jq`, and `vhs`, with `persiyanov.reviewr` installed.
+
+Require git
+Require herdr
+Require jq
 
 Output assets/demo.gif
 
@@ -15,8 +19,8 @@ Set TypingSpeed 45ms
 
 # --- Hidden setup: a temp repo with a committed baseline + an uncommitted edit to review ---
 Hide
-Type "BIN=$PWD/target/release/herdr-reviewr && bash assets/demo-fixture.sh /tmp/herdr-reviewr-demo" Enter
-Type "bash /tmp/herdr-reviewr-demo/.git/reviewr-demo/demo-session $BIN" Enter
+Type "VERSION=$(awk -F'\"' '/^version = / {print $2; exit}' herdr-plugin.toml) && BIN=$(herdr plugin list --plugin persiyanov.reviewr --json | jq -er --arg version $VERSION '.result.plugins[] | select(.version == $version and .source.kind == \"github\") | .plugin_root + \"/bin/herdr-reviewr\"') && test -x \"$BIN\" && bash assets/demo-fixture.sh /tmp/herdr-reviewr-demo || exit 1" Enter
+Type "bash /tmp/herdr-reviewr-demo/.git/reviewr-demo/demo-session $BIN || exit 1" Enter
 Show
 
 # --- The review loop ---
@@ -42,10 +46,6 @@ Sleep 800ms
 Enter
 Sleep 1200ms
 
-# Send the review. reviewr adds it to the adjacent agent input and hands focus back.
+# Send the review. reviewr exports it to the agent input and confirms the handoff in the footer.
 Type "s"
 Sleep 2800ms
-
-# Leave tmux and clean up the demo session.
-Ctrl+B
-Type "d"
