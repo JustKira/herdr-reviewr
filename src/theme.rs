@@ -112,11 +112,12 @@ fn build(name: &str) -> Option<Theme> {
         }
         "github-light" => derived("github-light", Light, E::Github, GITHUB_LIGHT),
         "monokai" => derived("monokai", Dark, E::MonokaiExtended, MONOKAI),
-        // herdr names whose syntax `two-face` lacks, paired with a vendored `.tmTheme`.
+        // Themes whose syntax `two-face` lacks, paired with a vendored `.tmTheme`.
         "tokyo-night" => bundled("tokyo-night", Dark, TOKYO_NIGHT_TM, TOKYO_NIGHT),
         "tokyo-night-day" => bundled("tokyo-night-day", Light, TOKYO_NIGHT_DAY_TM, TOKYO_NIGHT_DAY),
         "rose-pine" => bundled("rose-pine", Dark, ROSE_PINE_TM, ROSE_PINE),
         "rose-pine-dawn" => bundled("rose-pine-dawn", Light, ROSE_PINE_DAWN_TM, ROSE_PINE_DAWN),
+        "vesper" => bundled("vesper", Dark, VESPER_TM, VESPER),
         _ => return None,
     })
 }
@@ -182,14 +183,15 @@ fn bundled(
     Theme { name, palette: derive(anchors, appearance), syntax: SyntaxChoice::Bundled(syntax) }
 }
 
-/// Vendored `.tmTheme` assets for the syntax themes `two-face` does not carry (and Mocha,
-/// kept as the byte-identical source of today's highlighting). Licenses listed in the
-/// README's License section.
+/// Vendored `.tmTheme` assets for syntax themes `two-face` does not carry (and Mocha,
+/// kept as the byte-identical source of today's highlighting). Licenses listed in
+/// the README's License section.
 const MOCHA_TM: &[u8] = include_bytes!("../assets/Catppuccin Mocha.tmTheme");
 const TOKYO_NIGHT_TM: &[u8] = include_bytes!("../assets/tokyo-night.tmTheme");
 const TOKYO_NIGHT_DAY_TM: &[u8] = include_bytes!("../assets/tokyo-night-day.tmTheme");
 const ROSE_PINE_TM: &[u8] = include_bytes!("../assets/rose-pine.tmTheme");
 const ROSE_PINE_DAWN_TM: &[u8] = include_bytes!("../assets/rose-pine-dawn.tmTheme");
+const VESPER_TM: &[u8] = include_bytes!("../assets/vesper.tmTheme");
 
 /// Catppuccin Latte: a light theme, derived from its anchors to exercise the derivation
 /// path (and paired with `two-face`'s Latte syntax theme).
@@ -239,6 +241,8 @@ const ROSE_PINE: Anchors =
     anchors(0x191724, 0xe0def4, 0xeb6f92, 0x9ccfd8, 0xf6c177, 0xebbcba, 0xc4a7e7, 0x31748f);
 const ROSE_PINE_DAWN: Anchors =
     anchors(0xfaf4ed, 0x575279, 0xb4637a, 0x56949f, 0xea9d34, 0xd7827e, 0x907aa9, 0x286983);
+const VESPER: Anchors =
+    anchors(0x101010, 0xffffff, 0xff8080, 0x99ffe4, 0xffc799, 0xff7300, 0xffc799, 0xa0a0a0);
 
 /// Build `Anchors` from `0xRRGGBB` hex literals, so a palette reads as one compact row.
 /// One argument per anchor slot — the count is the palette's shape, not accidental.
@@ -445,6 +449,7 @@ mod tests {
         ("tokyo-night-day", true),
         ("rose-pine", false),
         ("rose-pine-dawn", true),
+        ("vesper", false),
     ];
 
     #[test]

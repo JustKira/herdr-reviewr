@@ -45,10 +45,10 @@ The derived slots:
 The theme set:
 
 - Catppuccin: `catppuccin` (Mocha, the default), `catppuccin-latte`, `catppuccin-frappe`, `catppuccin-macchiato`.
-- Dark: `dracula`, `nord`, `gruvbox`, `one-dark`, `solarized`, `monokai`, `tokyo-night`, `rose-pine`.
-- Light: `gruvbox-light`, `one-light`, `solarized-light`, `github-light`, `tokyo-night-day`, `rose-pine-dawn`.
-
-A herdr name outside this set (`kanagawa`, `kanagawa-lotus`, `vesper`, `terminal`, dark `github`) is not a valid config value until added (Non-goals).
+- Dark: `dracula`, `nord`, `gruvbox`, `one-dark`, `solarized`, `monokai`, `tokyo-night`, `rose-pine`,
+  `vesper`.
+- Light: `gruvbox-light`, `one-light`, `solarized-light`, `github-light`, `tokyo-night-day`,
+  `rose-pine-dawn`.
 
 ## Behavior
 
@@ -96,8 +96,6 @@ reviewr only reads the config file, never writes it, so concurrent sidebars and 
 - No light/dark auto-detection. The default is `catppuccin` regardless of terminal appearance. Roadmap.
 - No auto-switch pairing. Light and dark are separate named themes.
 - No custom or user-defined palettes.
-- No `kanagawa`, `kanagawa-lotus`, `vesper`, or dark `github` yet. Each needs a bundled syntax theme. Roadmap.
-- No colorblind secondary cue for add/remove. Roadmap.
 - No config keys beyond `theme` here. `--poll`, `--base`, and `--wrap` stay CLI-only, and the config file does not restore the removed `keep` list.
 
 ## Related specs

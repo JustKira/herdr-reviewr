@@ -44,9 +44,23 @@ It **never edits your worktree** and sends nothing on its own. Its only write to
 Install the latest release. It uses a prebuilt binary, so you don't need a Rust toolchain:
 
 ```bash
-herdr plugin install persiyanov/herdr-reviewr
+herdr plugin install JustKira/herdr-reviewr
 ```
 
+For a local checkout (no GitHub release required), build and link the plugin:
+
+```bash
+git clone git@github.com:JustKira/herdr-reviewr.git
+cd herdr-reviewr
+just install
+herdr plugin link .
+```
+
+`herdr plugin link` is the supported way to run a plugin from your own repository. It skips
+release downloads and runs the locally built binary. To use `herdr plugin install
+JustKira/herdr-reviewr`, publish a GitHub release tagged `v<version>` from `herdr-plugin.toml`
+with the platform assets expected by `herdr/install.sh`.
+ 
 Then open it from your current herdr workspace:
 
 ```bash
@@ -243,7 +257,7 @@ terminal's light or dark background. The pane keeps the terminal's background, s
 on a dark terminal reads poorly, and so does the reverse. Available:
 
 - **Dark:** `catppuccin`, `catppuccin-frappe`, `catppuccin-macchiato`, `dracula`, `nord`,
-  `gruvbox`, `one-dark`, `solarized`, `monokai`, `tokyo-night`, `rose-pine`.
+  `gruvbox`, `one-dark`, `solarized`, `monokai`, `tokyo-night`, `rose-pine`, `vesper`.
 - **Light:** `catppuccin-latte`, `gruvbox-light`, `one-light`, `solarized-light`, `github-light`,
   `tokyo-night-day`, `rose-pine-dawn`.
 
@@ -500,11 +514,10 @@ herdr plugin link .
 
 Structured (JSON) export, in-diff search, a side-by-side split view, mark-file-reviewed,
 modifier and named-key notation for keybindings, OSC light/dark theme autodetect, more themes
-(`kanagawa`, `vesper`, `everforest`, `ayu`, a dark `github`), a `terminal`-following palette,
+(`kanagawa`, `everforest`, `ayu`, a dark `github`), a `terminal`-following palette,
 and OSC 52 clipboard.
 
 ## Design
-
 The living design lives in [`specs/`](specs/), one concept per doc, always current.
 
 ## License
@@ -518,3 +531,4 @@ Bundled `.tmTheme` syntax files in `assets/`, each under its own license:
 - [Catppuccin Mocha](https://github.com/catppuccin/bat) — MIT.
 - [Tokyo Night](https://github.com/folke/tokyonight.nvim) (`tokyo-night`, `tokyo-night-day`) — Apache-2.0.
 - [Rosé Pine](https://github.com/rose-pine/tm-theme) (`rose-pine`, `rose-pine-dawn`) — MIT.
+- [Vesper](https://github.com/vladzima/vesper) (`vesper`) — Apache-2.0 palette/source attribution; syntax token mapping adapted from [Rauno Freiberg's Vesper theme](https://github.com/raunofreiberg/vesper) (MIT).
