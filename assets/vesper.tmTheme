@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>name</key><string>Vesper</string><key>settings</key><array>
 <dict>
+<key>settings</key><dict><key>background</key><string>#101010</string><key>foreground</key><string>#FFFFFF</string></dict>
+</dict>
+<dict>
 <key>name</key><string>Comment</string>
 <key>scope</key><string>comment, punctuation.definition.comment</string>
 <key>settings</key><dict><key>foreground</key><string>8b8b8b94</string></dict>
