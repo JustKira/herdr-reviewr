@@ -170,4 +170,24 @@ mod tests {
             vec![super::Span { text: "plain text".into(), color: (0xff, 0xff, 0xff) }]
         );
     }
+
+    #[test]
+    fn vesper_rust_tokens_use_canonical_accent_colors() {
+        let h = Highlighter::new(theme::resolve(Some("vesper")).syntax);
+        let lines = h.highlight(
+            "// note\nfn greet() { let message = \"hello\"; let count = 42; }\n",
+            Some("rs"),
+        );
+        let colors = lines
+            .iter()
+            .flat_map(|line| line.iter().map(|span| span.color))
+            .collect::<std::collections::HashSet<_>>();
+        assert!(colors.len() > 1, "Vesper Rust tokens should not all use default white");
+        assert!(
+            colors.contains(&(0xff, 0xc7, 0x99)),
+            "Vesper accent #FFC799 should color keywords/functions/numbers"
+        );
+        assert!(colors.contains(&(0x99, 0xff, 0xe4)), "Vesper accent #99FFE4 should color strings");
+        assert!(colors.contains(&(0x8b, 0x8b, 0x8b)), "Vesper comment color should be applied");
+    }
 }
